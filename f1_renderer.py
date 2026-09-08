@@ -941,8 +941,14 @@ class F1Renderer:
         qualifying header so the two sections read as a pair, but titled with
         the race name itself rather than a session label.
         """
+        # "Italian Grand Prix" is 18 characters and will not fit at 7x13 beside
+        # the F1 logo, so the GP name goes on the title line in its short form
+        # and the session type sits underneath -- the same two-line shape the
+        # qualifying header uses, so the two openers read as a pair.
+        name = race.get("race_name", "Grand Prix")
         return self._render_session_header(
-            race.get("race_name", "Grand Prix"), "", F1_RED, (40, 0, 0))
+            name.replace("Grand Prix", "GP").strip(), "GRAND PRIX",
+            F1_RED, (40, 0, 0))
 
     def render_live_header(self, title: str, flag: Optional[str] = None) -> Image.Image:
         """f1-live: live_race header. Same furniture as the finished-race
@@ -991,6 +997,34 @@ class F1Renderer:
         self._race_pos_font_cache = font
         return font
 
+    def _race_name_font(self):
+        """Font for the driver surname on a race row.
+
+        Local patch. Bigger than the 6x10 the rest of the row uses, but a tier
+        below the position number so the number still leads. 7x13 is the
+        largest that fits: measured against the top ten at Monza, the usable
+        width between the accent bar and the team logo is 99px, and
+        "P3 VERSTAPPEN" needs 91px at 7x13 against 111px at 9x15 -- 9x15
+        overflows ANTONELLI, VERSTAPPEN and COLAPINTO, which would silently
+        collapse them back to the three-letter code.
+
+        Cached; only on short panels, for the same reason as the number.
+        """
+        cached = getattr(self, "_race_name_font_cache", None)
+        if cached is not None:
+            return cached
+        font = self.fonts["position"]
+        if not self.is_tall:
+            try:
+                bigger = self._load_font("7x13.bdf", 13)
+                if bigger is not None:
+                    font = bigger
+            except Exception:
+                self.logger.debug("7x13.bdf unavailable; race names stay at "
+                                  "the default size")
+        self._race_name_font_cache = font
+        return font
+
     def render_race_row(self, entry: Dict) -> Image.Image:
         """One finisher, as a full card.
 
@@ -1030,7 +1064,8 @@ class F1Renderer:
         self._draw_text_outlined(draw, (x, top), pos_text, pos_font,
                                  fill=(200, 200, 200))
         px = x + self._tw(draw, pos_text, pos_font) + 3
-        name = self._fit_driver_name(draw, entry, self.fonts["position"],
+        name_font = self._race_name_font()
+        name = self._fit_driver_name(draw, entry, name_font,
                                      content_max_x - px)
         # Sit the number and the name on a common baseline, measured from the
         # rendered GLYPHS. The number is 9x15 and the name 6x10, and offsetting
@@ -1044,16 +1079,19 @@ class F1Renderer:
         # "ink-aligned" formula built on it collapse back to the box maths it
         # was meant to replace. font.getmask().getbbox() gives the true extent:
         # "P4" inks rows 2-11 of its box, "NORRIS" rows 1-7 of its own.
-        name_y = top + max(0, ph - self._th(draw, "A", self.fonts["position"]))
+        name_y = top + max(0, ph - self._th(draw, "A", name_font))
         try:
             pos_ink = pos_font.getmask(pos_text, mode="1").getbbox()
-            name_ink = self.fonts["position"].getmask(name, mode="1").getbbox()
+            name_ink = name_font.getmask(name, mode="1").getbbox()
             if pos_ink and name_ink:
                 name_y = top + pos_ink[3] - name_ink[3]
         except Exception:
             pass    # keep the box-based fallback rather than fail to draw
-        self._draw_text_outlined(draw, (px, name_y), name, self.fonts["position"],
-                                 fill=(255, 255, 255))
+        # Surname in the team's colour. The accent bar and the underline already
+        # carry it, so the name reinforces the same cue rather than introducing
+        # a new one -- and on a scrolling ticker the colour is readable long
+        # before the letters are.
+        self._draw_text_outlined(draw, (px, name_y), name, name_font, fill=tc)
 
         # Line 2 left: time for the winner, gap for the rest. A driver who was
         # lapped or retired gets the reason instead -- their "gap" is a figure
@@ -1448,51 +1486,63 @@ class F1Renderer:
         row_logo_w = min(int(content_h * row_logo_frac), self.logo_box_max)
         content_max_x = self.display_width - (row_logo_w + 4)
 
-        # Rows: [P#+CODE (+time)] and [gap], spread to fill height on tall panels,
-        # packed from the top on 32-high panels (unchanged).
+        # Local patch: same shape as render_race_row -- the name owns line 1 and
+        # the time drops to line 2. Keeping the time beside the name is what
+        # forced the surname back to a three-letter code: measured on Monza,
+        # "P1 ANTONELLI 1:19.331" needs 105px of the 99px available even at the
+        # old 6x10, so ANTONELLI and VERSTAPPEN were already rendering as ANT
+        # and VER. Moving the time down frees the whole line for the name.
+        pos_font = self._race_position_font()
+        name_font = self._race_name_font()
         pos_text = f"P{entry.get('position', '?')}"
-        ph = self._th(draw, pos_text, self.fonts["position"])
+        ph = self._th(draw, pos_text, pos_font)
         sh = self._th(draw, "A", self.fonts["small"])
         ys = self._spread_ys(content_h, [ph, sh])
         top = ys[0]
-
-        self._draw_text_outlined(draw, (x, top), pos_text, self.fonts["position"],
-                                 fill=(200, 200, 200))
-        px = x + self._tw(draw, pos_text, self.fonts["position"]) + 3
-
-        # The lap/qualifying time is the priority on this row — strip its
-        # milliseconds ("1:10.123" → "1:10") and reserve its width so the driver
-        # name only grows into free space, falling back to the code when tight.
-        time_str = entry.get(time_key, "") if time_key else ""
-        if time_str and "." in time_str and not time_str.startswith("+"):
-            time_str = time_str.rsplit(".", 1)[0]
-        time_w = self._tw(draw, time_str, self.fonts["detail"]) if time_str else 0
-        name = self._fit_driver_name(draw, entry, self.fonts["position"],
-                                     content_max_x - px - (time_w + 4 if time_str else 0))
-        self._draw_text_outlined(draw, (px, top), name, self.fonts["position"],
-                                 fill=(255, 255, 255))
-        cx = px + self._tw(draw, name, self.fonts["position"]) + 4
-
-        if time_str:
-            time_trunc = self._truncate(draw, time_str, self.fonts["detail"],
-                                        content_max_x - cx)
-            self._draw_text_outlined(draw, (cx, top + 1), time_trunc, self.fonts["detail"],
-                                     fill=(200, 200, 200))
-        elif show_eliminated:
-            elim = entry.get("eliminated_in", "")
-            if elim:
-                self._draw_text_outlined(draw, (cx, top + 1), "OUT", self.fonts["detail"],
-                                         fill=(220, 60, 60))
-
-        # Gap below time
-        gap_str = entry.get(gap_key, "") if gap_key else ""
         row2_y = ys[1]
+
+        self._draw_text_outlined(draw, (x, top), pos_text, pos_font,
+                                 fill=(200, 200, 200))
+        px = x + self._tw(draw, pos_text, pos_font) + 3
+
+        name = self._fit_driver_name(draw, entry, name_font, content_max_x - px)
+        # Sit number and name on a common baseline measured from the glyphs.
+        # draw.textbbox() reports the advance box on these bitmap faces, not the
+        # ink, so it cannot be used here -- see render_race_row.
+        name_y = top + max(0, ph - self._th(draw, "A", name_font))
+        try:
+            pos_ink = pos_font.getmask(pos_text, mode="1").getbbox()
+            name_ink = name_font.getmask(name, mode="1").getbbox()
+            if pos_ink and name_ink:
+                name_y = top + pos_ink[3] - name_ink[3]
+        except Exception:
+            pass
+        self._draw_text_outlined(draw, (px, name_y), name, name_font, fill=tc)
+
+        # Line 2 left: the lap time, milliseconds INTACT. The old layout trimmed
+        # them to buy width beside the name, which on a qualifying board threw
+        # away the only thing that separates the drivers -- 1:21.786, 1:21.846
+        # and 1:21.966 all rendered as a flat "1:21". On its own line the full
+        # time costs about 32px of the ~99 available, so there is no reason to
+        # cut it.
+        time_str = entry.get(time_key, "") if time_key else ""
+        if time_str:
+            self._draw_text_outlined(
+                draw, (x, row2_y),
+                self._truncate(draw, time_str, self.fonts["detail"], content_max_x - x),
+                self.fonts["detail"], fill=(210, 210, 210))
+        elif show_eliminated and entry.get("eliminated_in", ""):
+            self._draw_text_outlined(draw, (x, row2_y), "OUT", self.fonts["detail"],
+                                     fill=(220, 60, 60))
+
+        # Line 2 right: the gap, right-aligned so it never collides with the time.
+        gap_str = entry.get(gap_key, "") if gap_key else ""
         if gap_str and row2_y + 5 < content_h:
             gap_trunc = self._truncate(draw, gap_str, self.fonts["small"],
                                        content_max_x - x)
-            draw.text((x + self._tw(draw, pos_text, self.fonts["position"]) + 3,
-                       row2_y), gap_trunc, font=self.fonts["small"],
-                      fill=(255, 200, 50))
+            gw = self._tw(draw, gap_trunc, self.fonts["small"])
+            draw.text((max(x, content_max_x - gw), row2_y), gap_trunc,
+                      font=self.fonts["small"], fill=(255, 200, 50))
 
         # Position delta (+N/-N) — shown when entry has a grid position (sprint results)
         grid_pos = entry.get("grid", 0)
@@ -1656,31 +1706,71 @@ class F1Renderer:
         # glyphs. 1-bit mode keeps strokes crisp.
         draw.fontmode = "1"
 
-        title_h = self._th(draw, "Ay", self.fonts["detail"])
-        sub_h = self._th(draw, "Ay", self.fonts["small"]) if subtitle else 0
-        group_h = title_h + (self.gap_y + sub_h if subtitle else 0)
-        top = self._body_top(self.display_height, group_h)
-        bar_bottom = self.display_height // 2
+        # Local patch: on a 32px panel this used to draw the title in the 4x6
+        # "detail" face with the coloured bar covering only the top half, which
+        # left the bottom half of every header card empty and made the section
+        # openers look like an afterthought next to the driver rows. Title now
+        # uses the same 7x13 the names use, the subtitle the 6x10 beneath it,
+        # and the two are spread over the full height. Tall panels keep the
+        # original behaviour.
+        title_font = self.fonts["detail"] if self.is_tall else self._race_name_font()
+        sub_font = self.fonts["small"] if self.is_tall else self.fonts["position"]
+
+        title_h = self._th(draw, "Ay", title_font)
+        sub_h = self._th(draw, "Ay", sub_font) if subtitle else 0
+
+        # No F1 badge on a short panel. The bundled asset is a placeholder -- a
+        # red rectangle with a white "F1", 443 bytes, 23 colours -- and at the
+        # 15x10 it gets drawn at here the letterforms collapse into the red and
+        # it reads as a plain red square. It was also taking ~17px of the width
+        # the race name needs. The header text is already in F1 red, so nothing
+        # is lost. Tall panels have the room to render it legibly and keep it.
+        f1_logo = None
         if self.is_tall:
-            bar_bottom = max(bar_bottom, top + group_h + 1)
+            f1_logo = self.logo_loader.get_f1_logo(
+                max_height=self.f1_logo_h, max_width=self.f1_logo_w)
+        hx = 2 if not f1_logo else f1_logo.width + 5
+
+        if self.is_tall:
+            group_h = title_h + (self.gap_y + sub_h if subtitle else 0)
+            top = self._body_top(self.display_height, group_h)
+            bar_bottom = max(self.display_height // 2, top + group_h + 1)
+            ry = top + title_h + self.gap_y
+        else:
+            # Fill the card: bar behind everything, the two lines spread over
+            # the height the way a driver row spreads its own two lines.
+            bar_bottom = self.display_height - 1
+            if subtitle:
+                ys = self._spread_ys(self.display_height, [title_h, sub_h])
+                top, ry = ys[0], ys[1]
+            else:
+                top = self._body_top(self.display_height, title_h)
+                ry = None
         draw.rectangle([0, 0, self.display_width - 1, bar_bottom], fill=bar_color)
 
-        f1_logo = self.logo_loader.get_f1_logo(max_height=self.f1_logo_h, max_width=self.f1_logo_w)
-        hx = 2
         if f1_logo:
             ly = top + max(0, (title_h - f1_logo.height) // 2)
             img.paste(f1_logo, (2, ly), f1_logo)
-            hx = f1_logo.width + 5
 
-        title_trunc = self._truncate(draw, title, self.fonts["detail"], self.display_width - hx - 2)
-        self._draw_text_outlined(draw, (hx, top), title_trunc, self.fonts["detail"], fill=title_color)
+        # Step the title down a tier rather than truncate it. Most GP names fit
+        # at 7x13 once shortened ("Italian GP" is 70px of 124), but the calendar
+        # has outliers -- "United Arab Emirates GP" is 161px -- and a clipped
+        # race name is worse than a smaller complete one.
+        avail = self.display_width - hx - 2
+        if not self.is_tall and self._tw(draw, title, title_font) > avail:
+            for candidate in (self.fonts["position"], self.fonts["detail"]):
+                if self._tw(draw, title, candidate) <= avail:
+                    title_font = candidate
+                    title_h = self._th(draw, "Ay", title_font)
+                    break
+        title_trunc = self._truncate(draw, title, title_font, avail)
+        self._draw_text_outlined(draw, (hx, top), title_trunc, title_font, fill=title_color)
 
-        if subtitle:
-            ry = top + title_h + self.gap_y
-            sub = self._truncate(draw, subtitle, self.fonts["small"], self.display_width - 4)
+        if subtitle and ry is not None:
+            sub = self._truncate(draw, subtitle, sub_font, self.display_width - 4)
             if ry + 5 < self.display_height:
-                self._draw_text_outlined(draw, (2, ry), sub, self.fonts["small"],
-                                         fill=(160, 160, 160))
+                self._draw_text_outlined(draw, (2, ry), sub, sub_font,
+                                         fill=(190, 190, 190))
         return img
 
     def render_qualifying_header(self, session_label: str = "Q3", race_name: str = "") -> Image.Image:
