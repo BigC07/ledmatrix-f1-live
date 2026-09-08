@@ -1,7 +1,7 @@
 """
-F1 Scoreboard Plugin
+F1 Live
 
-Main plugin class for the Formula 1 Scoreboard.
+Fork of ChuckBuilds f1-scoreboard. Adds live race timing from OpenF1.
 Displays driver standings, constructor standings, race results, qualifying,
 practice, sprint results, upcoming races, and race calendar.
 """
@@ -31,11 +31,12 @@ logger = logging.getLogger(__name__)
 
 class F1ScoreboardPlugin(BasePlugin):
     """
-    Formula 1 Scoreboard Plugin.
+    F1 Live. Class name stays F1ScoreboardPlugin so the manifest
+    entry_point still matches; the display name is in manifest.json.
 
     Displays F1 standings, race results, qualifying breakdowns, practice
-    standings, sprint results, upcoming races, and race calendar.
-    Supports favorite driver/team highlighting and Vegas scroll mode.
+    standings, sprint results, upcoming races, live race timing, and race
+    calendar. Supports favorite driver/team highlighting and Vegas scroll.
     """
 
     def __init__(self, plugin_id, config, display_manager,
@@ -143,7 +144,7 @@ class F1ScoreboardPlugin(BasePlugin):
             self.renderer.logo_max,
             self.renderer.logo_max)
 
-        self.logger.info("F1 Scoreboard initialized with %d modes: %s",
+        self.logger.info("F1 Live initialized with %d modes: %s",
                         len(self.modes), ", ".join(self.modes))
 
     def _live_poll_interval(self, config: Optional[Dict] = None) -> int:
@@ -1217,7 +1218,7 @@ class F1ScoreboardPlugin(BasePlugin):
         """Return diagnostic info for the web UI."""
         info = super().get_info()
         info.update({
-            "name": "F1 Scoreboard",
+            "name": "F1 Live",
             "enabled_modes": self.modes,
             "mode_count": len(self.modes),
             "last_update": self._last_update,
@@ -1284,7 +1285,7 @@ class F1ScoreboardPlugin(BasePlugin):
         """Clean up resources."""
         try:
             self.logo_loader.clear_cache()
-            self.logger.info("F1 Scoreboard cleanup completed")
+            self.logger.info("F1 Live cleanup completed")
         except Exception:
-            self.logger.exception("Error during F1 Scoreboard cleanup")
+            self.logger.exception("Error during F1 Live cleanup")
         super().cleanup()

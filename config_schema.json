@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "F1 Scoreboard Plugin Configuration",
-  "description": "Configuration schema for the F1 Scoreboard plugin - displays Formula 1 standings, race results, qualifying, practice, sprint results, upcoming races, and race calendar",
+  "title": "F1 Live Configuration",
+  "description": "F1 Live (fork of f1-scoreboard). Live OpenF1 race timing, standings, race results, qualifying, practice, sprint, upcoming races, and calendar.",
   "type": "object",
   "properties": {
     "enabled": {
