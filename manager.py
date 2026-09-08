@@ -1,0 +1,1290 @@
+"""
+F1 Scoreboard Plugin
+
+Main plugin class for the Formula 1 Scoreboard.
+Displays driver standings, constructor standings, race results, qualifying,
+practice, sprint results, upcoming races, and race calendar.
+"""
+
+import hashlib
+import json
+import logging
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from PIL import Image
+
+from src.plugin_system.base_plugin import BasePlugin, VegasDisplayMode
+
+from f1_data import F1DataSource
+from f1_live import (LiveRaceFeed, live_header_title, live_row_from_entry)
+from f1_renderer import F1Renderer
+from logo_downloader import F1LogoLoader
+from scroll_display import ScrollDisplayManager
+from team_colors import normalize_constructor_id
+
+from f1_timezone import resolve_timezone_name
+
+logger = logging.getLogger(__name__)
+
+
+class F1ScoreboardPlugin(BasePlugin):
+    """
+    Formula 1 Scoreboard Plugin.
+
+    Displays F1 standings, race results, qualifying breakdowns, practice
+    standings, sprint results, upcoming races, and race calendar.
+    Supports favorite driver/team highlighting and Vegas scroll mode.
+    """
+
+    def __init__(self, plugin_id, config, display_manager,
+                 cache_manager, plugin_manager):
+        super().__init__(plugin_id, config, display_manager,
+                        cache_manager, plugin_manager)
+
+        # Display dimensions
+        if hasattr(display_manager, "matrix") and display_manager.matrix:
+            self.display_width = display_manager.matrix.width
+            self.display_height = display_manager.matrix.height
+        else:
+            self.display_width = getattr(display_manager, "width", 128)
+            self.display_height = getattr(display_manager, "height", 32)
+
+        # Favorites
+        self.favorite_driver = config.get("favorite_driver", "").upper()
+        self.favorite_team = normalize_constructor_id(
+            config.get("favorite_team", ""))
+
+        # Display duration
+        self.display_duration = config.get("display_duration", 30)
+
+        # Scroll card width: use a fixed card width for scroll mode so cards are
+        # properly sized regardless of the full chain width (multi-panel setups)
+        scroll_cfg = config.get("scroll", {}) if isinstance(config.get("scroll"), dict) else {}
+        self._card_width = scroll_cfg.get("game_card_width", 128)
+
+        # Resolve timezone: plugin config → global config → UTC.
+        # Re-resolved on every config change so global timezone updates take
+        # effect immediately. Kept in a shallow copy (never written back into
+        # `config`) so the resolved value never gets persisted as a stale
+        # plugin-level override that would shadow future global changes.
+        self.timezone = self._resolve_timezone(config, cache_manager, plugin_manager)
+        render_config = {**config, "timezone": self.timezone}
+
+        # Initialize components
+        self.logo_loader = F1LogoLoader()
+        self.data_source = F1DataSource(cache_manager, render_config)
+        # Full-width renderer for static single-card display
+        self.renderer = F1Renderer(
+            self.display_width, self.display_height,
+            render_config, self.logo_loader, self.logger)
+        # Card-width renderer for scroll/Vegas mode
+        self._scroll_renderer = F1Renderer(
+            self._card_width, self.display_height,
+            render_config, self.logo_loader, self.logger)
+        self._scroll_manager = ScrollDisplayManager(
+            display_manager, config, self.logger,
+            global_config=getattr(self, 'global_config', {}) or {})
+        self.enable_scrolling = self._scroll_manager is not None
+
+        # Data state
+        self._driver_standings: List[Dict] = []
+        self._constructor_standings: List[Dict] = []
+        # Pre-filter P1/P2 used for battle cards (unaffected by top_n setting)
+        self._driver_battle_p1: Optional[Dict] = None
+        self._driver_battle_p2: Optional[Dict] = None
+        self._constructor_battle_p1: Optional[Dict] = None
+        self._constructor_battle_p2: Optional[Dict] = None
+        self._recent_races: List[Dict] = []
+        self._upcoming_race: Optional[Dict] = None
+        self._qualifying: Optional[Dict] = None
+        self._practice_results: Dict[str, Dict] = {}  # FP1/FP2/FP3
+        self._sprint: Optional[Dict] = None
+        self._calendar: List[Dict] = []
+        # Fingerprint of the data the scroll images were last built from, so a
+        # refresh that returned identical data does not re-render them.
+        self._scroll_content_sig: Optional[str] = None
+        self._pole_positions: Dict[str, int] = {}
+
+        # Cards for the most recent race only. The marquee's "last_race"
+        # section shows just that race, while the recent_races scroll mode
+        # shows several, so the two need separate lists.
+        self._vegas_last_race_cards: List[Image.Image] = []
+        # f1-live: live_race -- pre-rendered on the update tick, never on
+        # the render path. HTTP in get_vegas_content has frozen the panel.
+        self._vegas_live_race_cards: List[Image.Image] = []
+        self._live_snapshot: Optional[Dict] = None
+        self._live_cards_sig: Optional[str] = None
+
+        # Live session state
+        self._is_live: bool = False
+        self._live_session: str = ""
+        self._is_race_weekend: bool = False
+
+        # Timing
+        self._last_update = 0
+        self._last_live_check = 0
+        self._live_check_interval = 120  # check live status every 2 min
+        self._update_interval = config.get("update_interval", 3600)
+        self._base_update_interval = self._update_interval
+        self._last_live_feed = 0.0
+        self._live_feed = self._make_live_feed(config)
+        self._live_feed_interval = self._live_poll_interval(config)
+
+        # Display state tracking (for dynamic duration)
+        self._current_display_mode: Optional[str] = None
+
+        # Build enabled modes
+        self.modes = self._build_enabled_modes()
+
+        # Preload logos
+        self.logo_loader.preload_all_teams(
+            self.renderer.logo_max,
+            self.renderer.logo_max)
+
+        self.logger.info("F1 Scoreboard initialized with %d modes: %s",
+                        len(self.modes), ", ".join(self.modes))
+
+    def _live_poll_interval(self, config: Optional[Dict] = None) -> int:
+        cfg = (config or self.config or {}).get("live") or {}
+        try:
+            return max(10, min(120, int(cfg.get("poll_interval") or 20)))
+        except (TypeError, ValueError):
+            return 20
+
+    def _make_live_feed(self, config: Optional[Dict] = None) -> LiveRaceFeed:
+        """f1-live: live_race -- OpenF1 feed. Replay/fixtures are test-only."""
+        cfg = (config or self.config or {}).get("live") or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        replay_key = cfg.get("replay_session_key") or None
+        replay_at = cfg.get("replay_at") or None
+        fixture_dir = cfg.get("fixture_dir") or None
+        if fixture_dir and not replay_key:
+            # Fixtures freeze the board on a finished race. Only honour them
+            # when replay is explicitly pinned.
+            fixture_dir = None
+        try:
+            replay_key = int(replay_key) if replay_key else None
+        except (TypeError, ValueError):
+            replay_key = None
+        return LiveRaceFeed(
+            logger=self.logger,
+            replay_session_key=replay_key,
+            replay_at=replay_at or None,
+            fixture_dir=fixture_dir or None,
+        )
+
+    def _resolve_timezone(self, config: Dict, cache_manager, plugin_manager=None) -> str:
+        """Resolve timezone: plugin config → global config → system zone → UTC.
+
+        Consulting only ``cache_manager.config_manager`` used to fall through to
+        UTC on cores that expose ``config_manager`` via the plugin manager
+        instead, rendering every session start time in UTC.
+        """
+        return resolve_timezone_name(
+            config=config,
+            plugin_manager=plugin_manager if plugin_manager is not None
+            else getattr(self, "plugin_manager", None),
+            cache_manager=cache_manager,
+            log=self.logger,
+        )
+
+    def _build_enabled_modes(self) -> List[str]:
+        """Build list of enabled display modes from config."""
+        modes = []
+        mode_configs = {
+            "f1_driver_standings": self.config.get(
+                "driver_standings", {}).get("enabled", True),
+            "f1_constructor_standings": self.config.get(
+                "constructor_standings", {}).get("enabled", True),
+            "f1_recent_races": self.config.get(
+                "recent_races", {}).get("enabled", True),
+            "f1_upcoming": self.config.get(
+                "upcoming", {}).get("enabled", True),
+            "f1_qualifying": self.config.get(
+                "qualifying", {}).get("enabled", True),
+            "f1_practice": self.config.get(
+                "practice", {}).get("enabled", True),
+            "f1_sprint": self.config.get(
+                "sprint", {}).get("enabled", True),
+            "f1_calendar": self.config.get(
+                "calendar", {}).get("enabled", True),
+        }
+
+        for mode, enabled in mode_configs.items():
+            if enabled:
+                modes.append(mode)
+
+        return modes
+
+    # ─── Update ────────────────────────────────────────────────────────
+
+    def update(self):
+        """Fetch and update all F1 data from APIs."""
+        now = time.time()
+
+        # Check live session status more frequently than full data update
+        if now - self._last_live_check >= self._live_check_interval:
+            self._last_live_check = now
+            try:
+                self._is_live, self._live_session = (
+                    self.data_source.detect_live_session())
+                self._is_race_weekend = (
+                    self.data_source.get_is_race_weekend())
+
+                # Dynamic update interval: faster during race weekends
+                if self._is_live:
+                    self._update_interval = 300   # 5 min when live
+                elif self._is_race_weekend:
+                    self._update_interval = 600   # 10 min during weekend
+                else:
+                    self._update_interval = self._base_update_interval
+
+                if self._is_live:
+                    self.logger.info(
+                        "LIVE session detected: %s", self._live_session)
+            except Exception as e:
+                self.logger.warning("Live check error: %s", e, exc_info=True)
+
+        # f1-live: live_race -- poll on the update worker, never on the
+        # render path. HTTP in get_vegas_content has frozen the panel.
+        interval = self._live_feed_interval
+        if (self._live_snapshot is None
+                and not self._live_feed.replay_at
+                and not self._live_feed.replay_session_key):
+            interval = max(interval, 60)
+        if now - self._last_live_feed >= interval:
+            self._last_live_feed = now
+            try:
+                self._poll_live_race()
+            except Exception as e:
+                self.logger.warning("Live race feed error: %s", e, exc_info=True)
+
+        if now - self._last_update < self._update_interval:
+            return
+
+        self.logger.info("Updating F1 data (live=%s, weekend=%s)...",
+                        self._is_live, self._is_race_weekend)
+        self._last_update = now
+
+        for step in (self._update_standings,
+                     self._update_recent_races,
+                     self._update_upcoming,
+                     self._update_qualifying,
+                     self._update_practice,
+                     self._update_sprint,
+                     self._update_calendar,
+                     self._prepare_scroll_content):
+            try:
+                step()
+            except Exception as e:
+                self.logger.error("Error in %s: %s", step.__name__,
+                                 e, exc_info=True)
+
+    def _update_standings(self):
+        """Update driver and constructor standings."""
+        # Driver standings
+        if "f1_driver_standings" in self.modes:
+            standings = self.data_source.fetch_driver_standings()
+            if standings:
+                # Calculate poles
+                self._pole_positions = (
+                    self.data_source.calculate_pole_positions())
+
+                # Shallow copy entries before adding poles/gaps to avoid
+                # mutating the cached standings dicts
+                standings = [dict(e) for e in standings]
+                for entry in standings:
+                    code = entry.get("code", "")
+                    entry["poles"] = self._pole_positions.get(code, 0)
+
+                # Annotate with championship gap data
+                standings = self.data_source.get_championship_gaps(standings)
+
+                # Save pre-filter P1/P2 for battle card (not affected by top_n)
+                if len(standings) >= 1:
+                    self._driver_battle_p1 = standings[0]
+                if len(standings) >= 2:
+                    self._driver_battle_p2 = standings[1]
+
+                # Apply favorite filter
+                top_n = self.config.get(
+                    "driver_standings", {}).get("top_n", 10)
+                always_show = self.config.get(
+                    "driver_standings", {}).get("always_show_favorite", True)
+
+                self._driver_standings = self.data_source.apply_favorite_filter(
+                    standings, top_n,
+                    favorite_driver=self.favorite_driver,
+                    favorite_team=self.favorite_team,
+                    always_show_favorite=always_show)
+
+        # Constructor standings
+        if "f1_constructor_standings" in self.modes:
+            standings = self.data_source.fetch_constructor_standings()
+            if standings:
+                # Annotate with championship gap data
+                standings = self.data_source.get_championship_gaps(standings)
+
+                # Save pre-filter P1/P2 for battle card (not affected by top_n)
+                if len(standings) >= 1:
+                    self._constructor_battle_p1 = standings[0]
+                if len(standings) >= 2:
+                    self._constructor_battle_p2 = standings[1]
+
+                top_n = self.config.get(
+                    "constructor_standings", {}).get("top_n", 10)
+                always_show = self.config.get(
+                    "constructor_standings", {}).get(
+                        "always_show_favorite", True)
+
+                self._constructor_standings = (
+                    self.data_source.apply_favorite_filter(
+                        standings, top_n,
+                        favorite_team=self.favorite_team,
+                        always_show_favorite=always_show,
+                        driver_key="constructor_id",
+                        team_key="constructor_id"))
+
+    def _update_recent_races(self):
+        """Update recent race results."""
+        if "f1_recent_races" not in self.modes:
+            return
+
+        count = self.config.get("recent_races", {}).get("number_of_races", 3)
+        races = self.data_source.fetch_recent_races(count=count)
+        if races:
+            top_finishers = self.config.get(
+                "recent_races", {}).get("top_finishers", 3)
+            always_show = self.config.get(
+                "recent_races", {}).get("always_show_favorite", True)
+
+            # Shallow copy race dicts before mutating results to avoid
+            # altering the cached objects from fetch_recent_races
+            filtered_races = []
+            for race in races:
+                race_copy = dict(race)
+                results = race.get("results", [])
+                # Preserve full results for the points haul card
+                race_copy["all_results"] = results
+                race_copy["results"] = self.data_source.apply_favorite_filter(
+                    results, top_finishers,
+                    favorite_driver=self.favorite_driver,
+                    always_show_favorite=always_show)
+                filtered_races.append(race_copy)
+
+            self._recent_races = filtered_races
+
+    def _update_upcoming(self):
+        """Update upcoming race data."""
+        if "f1_upcoming" not in self.modes:
+            return
+
+        upcoming = self.data_source.get_upcoming_race()
+        if upcoming:
+            self._upcoming_race = upcoming
+
+    def _update_qualifying(self):
+        """Update qualifying results."""
+        if "f1_qualifying" not in self.modes:
+            return
+
+        qualifying = self.data_source.fetch_qualifying()
+        if qualifying:
+            self._qualifying = qualifying
+
+    def _update_practice(self):
+        """Update free practice results."""
+        if "f1_practice" not in self.modes:
+            return
+
+        sessions = self.config.get(
+            "practice", {}).get("sessions_to_show", ["FP1", "FP2", "FP3"])
+        top_n = self.config.get("practice", {}).get("top_n", 10)
+
+        session_name_map = {
+            "FP1": "Practice 1",
+            "FP2": "Practice 2",
+            "FP3": "Practice 3",
+        }
+
+        for fp_key in sessions:
+            session_name = session_name_map.get(fp_key)
+            if not session_name:
+                continue
+
+            result = self.data_source.fetch_practice_results(session_name)
+            if result:
+                # Shallow copy before slicing to avoid mutating cached dict
+                result_copy = dict(result)
+                if result_copy.get("results"):
+                    result_copy["results"] = result_copy["results"][:top_n]
+                self._practice_results[fp_key] = result_copy
+
+    def _update_sprint(self):
+        """Update sprint race results."""
+        if "f1_sprint" not in self.modes:
+            return
+
+        sprint = self.data_source.fetch_sprint_results()
+        if sprint:
+            # Shallow copy before slicing to avoid mutating cached dict
+            sprint_copy = dict(sprint)
+            top_n = self.config.get("sprint", {}).get("top_finishers", 10)
+            if sprint_copy.get("results"):
+                sprint_copy["results"] = sprint_copy["results"][:top_n]
+            self._sprint = sprint_copy
+
+    def _update_calendar(self):
+        """Update race calendar."""
+        if "f1_calendar" not in self.modes:
+            return
+
+        cal_config = self.config.get("calendar", {})
+        calendar = self.data_source.get_calendar(
+            show_practice=cal_config.get("show_practice", False),
+            show_qualifying=cal_config.get("show_qualifying", True),
+            show_sprint=cal_config.get("show_sprint", True),
+            max_events=cal_config.get("max_events", 5))
+        if calendar:
+            self._calendar = calendar
+
+    # ─── Gap Trend Helper ──────────────────────────────────────────────
+
+    def _compute_race_gap_trend(self, code1: str, code2: str,
+                                 use_constructor: bool = False) -> int:
+        """
+        Return points delta (code1 - code2) from the most recent race.
+        Positive = code1 extended its lead; negative = code2 is closing.
+        Returns 0 if data is unavailable.
+        """
+        if not self._recent_races:
+            return 0
+        all_res = self._recent_races[0].get("all_results", [])
+        if use_constructor:
+            pts1 = sum(e.get("points", 0) for e in all_res
+                       if e.get("constructor_id", "") == code1)
+            pts2 = sum(e.get("points", 0) for e in all_res
+                       if e.get("constructor_id", "") == code2)
+            if pts1 == 0 and pts2 == 0:
+                return 0
+        else:
+            pts1 = next(
+                (e.get("points", 0) for e in all_res
+                 if e.get("code", "").upper() == code1.upper()), None)
+            pts2 = next(
+                (e.get("points", 0) for e in all_res
+                 if e.get("code", "").upper() == code2.upper()), None)
+            if pts1 is None or pts2 is None:
+                return 0
+        return int(pts1 - pts2)
+
+    # ─── Scroll Content Preparation ────────────────────────────────────
+
+    def _scroll_content_signature(self) -> str:
+        """Fingerprint every input _prepare_scroll_content renders from.
+
+        Rendering all twelve scroll modes is the single most expensive thing
+        this plugin does -- measured at 12.46s on a Pi, one image of which was
+        11250x64px -- and update() ran it unconditionally on every refresh.
+        Outside a race weekend the refreshed data is byte-identical to the last
+        one, so nearly all of that work rebuilt images that were already
+        correct. The plugin update runs on a worker thread, but the render loop
+        shares the interpreter with it, and the marquee visibly stalled.
+
+        Anything a card is drawn from belongs here. A field left out means the
+        panel keeps showing stale content, so this errs toward including too
+        much: the hash costs microseconds against seconds of rendering.
+        """
+        r = self._scroll_renderer
+        payload = {
+            "live": [self._is_live, self._live_session],
+            "driver_standings": self._driver_standings,
+            "constructor_standings": self._constructor_standings,
+            "driver_battle": [self._driver_battle_p1, self._driver_battle_p2],
+            "constructor_battle": [self._constructor_battle_p1,
+                                   self._constructor_battle_p2],
+            "recent_races": self._recent_races,
+            "upcoming_race": self._upcoming_race,
+            "qualifying": self._qualifying,
+            "practice": self._practice_results,
+            "sprint": self._sprint,
+            "calendar": self._calendar,
+            "favorites": [self.favorite_driver, self.favorite_team],
+            # Renderer toggles decide which cards exist at all.
+            "flags": {name: getattr(r, name, None)
+                      for name in sorted(dir(r)) if name.startswith("show_")},
+            "recent_races_cfg": self.config.get("recent_races", {}),
+        }
+        blob = json.dumps(payload, sort_keys=True, default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    def _prepare_scroll_content(self, force: bool = False):
+        """Pre-render all scroll mode content.
+
+        Skips the work when the underlying data is unchanged since the last
+        build. Pass force=True when a mode is known to be unprepared -- the
+        signature can match while the images themselves are missing, e.g. on
+        the first display after a mode was added.
+        """
+        signature = self._scroll_content_signature()
+        if not force and signature == self._scroll_content_sig:
+            self.logger.debug(
+                "F1 data unchanged since the last build; keeping the "
+                "prepared scroll content")
+            return
+        self._scroll_content_sig = signature
+
+        r = self._scroll_renderer
+        separator = r.render_f1_separator()
+        is_live = self._is_live
+        live_sess = self._live_session
+
+        # Round / season info (used by headers and battle card)
+        season = datetime.now(timezone.utc).year
+        round_num = self.data_source.get_latest_round(season)
+        total_rounds = len(self._calendar) if self._calendar else 24
+        remaining_races = max(0, total_rounds - round_num)
+
+        # Championship leaders intro card (very first in Vegas scroll)
+        if r.show_championship_leaders and self._driver_standings and self._constructor_standings:
+            drv_leader = self._driver_standings[0] if self._driver_standings else None
+            con_leader = self._constructor_standings[0] if self._constructor_standings else None
+            if drv_leader and con_leader:
+                leaders_card = r.render_championship_leaders(
+                    drv_leader, con_leader,
+                    is_live=is_live, live_session=live_sess)
+                self._scroll_manager.prepare_and_display(
+                    "championship_leaders", [leaders_card], separator)
+
+        # Driver championship battle card (P1 vs P2, follows leaders)
+        # Uses pre-filter standings so top_n config doesn't affect P1/P2 selection
+        if r.show_championship_battle and self._driver_battle_p1 and self._driver_battle_p2:
+            p1 = self._driver_battle_p1
+            p2 = self._driver_battle_p2
+            gap_trend = self._compute_race_gap_trend(
+                p1.get("code", ""), p2.get("code", ""))
+            battle_card = r.render_championship_battle_card(
+                p1, p2, remaining_races=remaining_races,
+                gap_trend=gap_trend,
+                is_live=is_live, live_session=live_sess)
+            self._scroll_manager.prepare_and_display(
+                "championship_battle", [battle_card], separator)
+
+        # Constructor championship battle card (P1 vs P2 constructor)
+        if r.show_constructor_battle and self._constructor_battle_p1 and self._constructor_battle_p2:
+            cp1 = self._constructor_battle_p1
+            cp2 = self._constructor_battle_p2
+            con_gap_trend = self._compute_race_gap_trend(
+                cp1.get("constructor_id", ""), cp2.get("constructor_id", ""),
+                use_constructor=True)
+            con_battle = r.render_constructor_battle_card(
+                cp1, cp2, remaining_races=remaining_races,
+                gap_trend=con_gap_trend,
+                is_live=is_live, live_session=live_sess)
+            self._scroll_manager.prepare_and_display(
+                "constructor_battle", [con_battle], separator)
+
+        # Spotlight card for favorite driver (appears first in sequence)
+        if self.favorite_driver and self._driver_standings:
+            fav_entry = next(
+                (e for e in self._driver_standings
+                 if e.get("code", "").upper() == self.favorite_driver),
+                None)
+            if fav_entry:
+                spotlight = r.render_favorite_driver_spotlight(
+                    fav_entry, is_live=is_live, live_session=live_sess,
+                    recent_races=self._recent_races)
+                self._scroll_manager.prepare_and_display(
+                    "driver_spotlight", [spotlight], separator)
+
+        # Spotlight card for favorite team
+        if self.favorite_team and self._constructor_standings:
+            fav_team = next(
+                (e for e in self._constructor_standings
+                 if e.get("constructor_id", "") == self.favorite_team),
+                None)
+            if fav_team:
+                # Also find team drivers in driver standings
+                team_drivers = [
+                    e for e in self._driver_standings
+                    if e.get("constructor_id", "") == self.favorite_team
+                ] if self._driver_standings else []
+                spotlight = r.render_favorite_team_spotlight(
+                    fav_team, driver_entries=team_drivers,
+                    is_live=is_live, live_session=live_sess)
+                self._scroll_manager.prepare_and_display(
+                    "team_spotlight", [spotlight], separator)
+
+        # Build last-race points lookup (driver code → points scored in most recent race)
+        last_race_pts_map: Dict[str, int] = {}
+        last_race_con_pts_map: Dict[str, int] = {}
+        if self._recent_races:
+            for res in self._recent_races[0].get("all_results", []):
+                code = res.get("code", "").upper()
+                cid_res = res.get("constructor_id", "")
+                pts = int(res.get("points", 0))
+                last_race_pts_map[code] = pts
+                last_race_con_pts_map[cid_res] = (
+                    last_race_con_pts_map.get(cid_res, 0) + pts)
+
+        # Driver standings
+        if self._driver_standings:
+            cards = []
+            if r.show_standings_header:
+                cards.append(r.render_standings_header(
+                    "DRIVER STANDINGS", round_num=round_num,
+                    total_rounds=total_rounds, season=season))
+            # Driver form guide card (recent race positions at a glance)
+            if r.show_driver_form and self._recent_races:
+                form_card = r.render_driver_form_card(
+                    self._driver_standings[:8], self._recent_races)
+                cards.append(form_card)
+            for e in self._driver_standings:
+                enriched = dict(e)
+                enriched["last_race_pts"] = last_race_pts_map.get(
+                    e.get("code", "").upper(), 0)
+                cards.append(r.render_driver_standing(
+                    enriched, is_live=is_live, live_session=live_sess))
+            self._scroll_manager.prepare_and_display(
+                "driver_standings", cards, separator)
+
+        # Constructor standings (enriched with per-driver points)
+        if self._constructor_standings:
+            cards = []
+            if r.show_standings_header:
+                cards.append(r.render_standings_header(
+                    "CONSTRUCTOR STANDINGS", round_num=round_num,
+                    total_rounds=total_rounds, season=season))
+            for e in self._constructor_standings:
+                cid = e.get("constructor_id", "")
+                team_drivers = sorted(
+                    [d for d in self._driver_standings
+                     if d.get("constructor_id") == cid],
+                    key=lambda d: d.get("position", 99))
+                entry = dict(e)
+                entry["team_drivers"] = team_drivers
+                entry["last_race_pts"] = last_race_con_pts_map.get(cid, 0)
+                cards.append(r.render_constructor_standing(
+                    entry, is_live=is_live, live_session=live_sess))
+            self._scroll_manager.prepare_and_display(
+                "constructor_standings", cards, separator)
+
+        # Recent races (winners summary + podium cards + favorite highlight + points haul + gap chart)
+        rr_cfg = self.config.get("recent_races", {})
+        show_winners = rr_cfg.get("show_winners_summary", True)
+        self._vegas_last_race_cards = []
+        if self._recent_races:
+            cards = []
+            # Winners summary at the top (only if showing 2+ races)
+            if show_winners and len(self._recent_races) > 1:
+                cards.append(r.render_recent_winners_card(self._recent_races))
+            for index, race in enumerate(self._recent_races):
+                race_cards = self._build_race_cards(race)
+                # _recent_races is most-recent-first, so index 0 is the race the
+                # marquee's "last_race" section shows. Captured here rather than
+                # re-rendered later, and rather than sliced back out of `cards`
+                # below — the per-race card count varies with config and with
+                # whether the favorite finished off the podium.
+                if index == 0:
+                    self._vegas_last_race_cards = list(race_cards)
+                cards.extend(race_cards)
+            self._scroll_manager.prepare_and_display(
+                "recent_races", cards, separator)
+
+        # Qualifying
+        if self._qualifying:
+            cards = self._build_qualifying_cards()
+            if cards:
+                self._scroll_manager.prepare_and_display(
+                    "qualifying", cards, separator)
+
+        # Practice
+        practice_cards = self._build_practice_cards()
+        if practice_cards:
+            self._scroll_manager.prepare_and_display(
+                "practice", practice_cards, separator)
+
+        # Sprint
+        if self._sprint and self._sprint.get("results"):
+            cards = [r.render_sprint_header(
+                        self._sprint.get("race_name", ""))]
+            for entry in self._sprint["results"]:
+                cards.append(r.render_sprint_entry(entry))
+            self._scroll_manager.prepare_and_display(
+                "sprint", cards, separator)
+
+        # Calendar
+        if self._calendar:
+            cards = [r.render_calendar_entry(e)
+                    for e in self._calendar]
+            self._scroll_manager.prepare_and_display(
+                "calendar", cards, separator)
+
+    def _build_race_cards(self, race: Dict) -> List[Image.Image]:
+        """
+        Build the cards for a single race: the result, then whichever extras
+        are enabled.
+
+        Shared by the recent_races scroll mode and the marquee's "last_race"
+        section so a race is presented the same way in both, and so the
+        recent_races toggles keep applying in the marquee.
+
+        Args:
+            race: One entry from self._recent_races
+
+        Returns:
+            Cards for that race, in display order
+        """
+        r = self._scroll_renderer
+        rr_cfg = self.config.get("recent_races", {})
+        # Local patch (repo patches/patch_f1_race_rows.py): a name card then one
+        # card per finisher, the way the qualifying section already reads.
+        # render_race_result()'s three-column podium is left in the renderer,
+        # unused here, so reverting is just restoring this file.
+        #
+        # `results` has already been trimmed to recent_races.top_finishers by
+        # apply_favorite_filter() in _update_recent_races(), which also appends
+        # the favourite driver when they finish outside that cut -- so they get
+        # a row of their own and the separate render_favorite_race_card() is
+        # redundant on this path.
+        results = race.get("results", [])
+        cards = [r.render_race_header(race)]
+        for entry in results:
+            cards.append(r.render_race_row(entry))
+
+        # Gap chart bar visualization (skip if no result data available)
+        if rr_cfg.get("show_gap_chart", True) and race.get("all_results"):
+            cards.append(r.render_race_gap_chart(
+                race, top_n=rr_cfg.get("gap_chart_drivers", 5)))
+
+        # Points haul bar chart (uses full unfiltered results)
+        if rr_cfg.get("show_points_haul", True):
+            cards.append(r.render_race_points_haul(
+                race, top_n=rr_cfg.get("points_haul_drivers", 5)))
+
+        return cards
+
+    def _build_qualifying_cards(self) -> List[Image.Image]:
+        """Build qualifying result cards grouped by Q session."""
+        if not self._qualifying:
+            return []
+
+        r = self._scroll_renderer
+        cards = []
+        quali_config = self.config.get("qualifying", {})
+        results = self._qualifying.get("results", [])
+        race_name = self._qualifying.get("race_name", "")
+
+        # Team H2H card at the start of qualifying section
+        if quali_config.get("show_team_duel", True) and results:
+            cards.append(r.render_qualifying_team_duel_card(self._qualifying))
+
+        for session_key, show_key, label in [
+            ("q3", "show_q3", "Q3"),
+            ("q2", "show_q2", "Q2"),
+            ("q1", "show_q1", "Q1"),
+        ]:
+            if not quali_config.get(show_key, True):
+                continue
+
+            # Add session header
+            cards.append(r.render_qualifying_header(
+                label, race_name))
+
+            # Add entries for this session
+            for entry in results:
+                # Only show entries that have a time for this session
+                if entry.get(session_key):
+                    cards.append(r.render_qualifying_entry(
+                        entry, label))
+                elif entry.get("eliminated_in") == label:
+                    # Show eliminated driver
+                    cards.append(r.render_qualifying_entry(
+                        entry, label))
+
+        return cards
+
+    def _build_practice_cards(self) -> List[Image.Image]:
+        """Build practice result cards for all configured sessions."""
+        r = self._scroll_renderer
+        cards = []
+
+        for fp_key in ["FP3", "FP2", "FP1"]:  # Most recent first
+            if fp_key not in self._practice_results:
+                continue
+
+            fp_data = self._practice_results[fp_key]
+            cards.append(r.render_practice_header(
+                fp_key, fp_data.get("circuit", "")))
+
+            for entry in fp_data.get("results", []):
+                cards.append(r.render_practice_entry(entry))
+
+        return cards
+
+    # ─── Display ───────────────────────────────────────────────────────
+
+    def display(self, force_clear=False, display_mode=None) -> bool:
+        """
+        Display the current F1 mode.
+
+        Args:
+            force_clear: Whether to clear display first
+            display_mode: Specific mode to display (from manifest display_modes)
+
+        Returns:
+            True if content was displayed, False if mode has no data
+        """
+        if not self.enabled:
+            return False
+
+        if display_mode is None:
+            display_mode = self.modes[0] if self.modes else "f1_driver_standings"
+
+        self._current_display_mode = display_mode
+
+        if display_mode == "f1_upcoming":
+            return self._display_upcoming(force_clear)
+        elif display_mode in ("f1_driver_standings",
+                               "f1_constructor_standings",
+                               "f1_recent_races",
+                               "f1_qualifying",
+                               "f1_practice",
+                               "f1_sprint",
+                               "f1_calendar"):
+            return self._display_scroll_mode(display_mode, force_clear)
+        else:
+            self.logger.warning("Unknown display mode: %s", display_mode)
+            return False
+
+    def _enrich_upcoming_with_countdown(self,
+                                        race: Dict) -> Dict:
+        """Return a shallow copy of race with fresh countdown_seconds set."""
+        upcoming = dict(race)
+        upcoming["countdown_seconds"] = None
+
+        now = datetime.now(timezone.utc)
+
+        for session in upcoming.get("sessions", []):
+            if session.get("status_state") == "pre" and session.get("date"):
+                try:
+                    parsed_dt = datetime.fromisoformat(
+                        session["date"].replace("Z", "+00:00"))
+                    if parsed_dt > now:
+                        upcoming["countdown_seconds"] = max(
+                            0, (parsed_dt - now).total_seconds())
+                        upcoming["next_session_type"] = session.get(
+                            "type_abbr", "")
+                        break
+                except (ValueError, TypeError):
+                    continue
+
+        return upcoming
+
+    def _display_upcoming(self, force_clear: bool) -> bool:
+        """Display the upcoming race card (static)."""
+        if not self._upcoming_race:
+            return False
+
+        if force_clear:
+            self.display_manager.image.paste(
+                Image.new("RGB",
+                          (self.display_width, self.display_height),
+                          (0, 0, 0)),
+                (0, 0))
+
+        upcoming = self._enrich_upcoming_with_countdown(self._upcoming_race)
+        card = self.renderer.render_upcoming_race(upcoming)
+        self.display_manager.image.paste(card, (0, 0))
+        self.display_manager.update_display()
+        return True
+
+    def _display_scroll_mode(self, display_mode: str,
+                              force_clear: bool) -> bool:
+        """Display a scrolling mode."""
+        mode_key = self._MODE_KEY_MAP.get(display_mode, display_mode)
+
+        if not self._scroll_manager.is_mode_prepared(mode_key):
+            # Unprepared despite a matching signature -- force past the skip.
+            self._prepare_scroll_content(force=True)
+
+        if not self._scroll_manager.is_mode_prepared(mode_key):
+            return False
+
+        self._scroll_manager.display_frame(mode_key, force_clear)
+        return True
+
+    # ─── Live race (OpenF1) ────────────────────────────────────────────
+
+    def _poll_live_race(self) -> None:
+        """Fetch a snapshot and rebuild live cards if it moved.
+
+        f1-live: live_race. Called from update() only.
+        """
+        snap = self._live_feed.state()
+        sig = self._live_cards_signature(snap)
+        self._live_snapshot = snap
+        if sig == self._live_cards_sig:
+            return
+        self._live_cards_sig = sig
+        if not snap:
+            if self._vegas_live_race_cards:
+                self.logger.info("Live race ended; reverting to normal cards")
+            self._vegas_live_race_cards = []
+            return
+        cards = self._build_live_race_cards(snap)
+        self._vegas_live_race_cards = cards
+        self.logger.info(
+            "Live race cards: %s lap=%s flag=%s n=%d",
+            ",".join(e.get("code", "?") for e in (snap.get("entries") or [])[:8]),
+            snap.get("lap"), snap.get("flag"), len(cards))
+
+    @staticmethod
+    def _live_cards_signature(snap: Optional[Dict]) -> str:
+        if not snap:
+            return "none"
+        payload = {
+            "lap": snap.get("lap"),
+            "flag": snap.get("flag"),
+            "circuit": snap.get("circuit"),
+            "entries": [
+                (e.get("position"), e.get("code"), e.get("gap_to_leader"),
+                 e.get("grid"), e.get("lap"))
+                for e in (snap.get("entries") or [])
+            ],
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+    def _live_race_name(self, snap: Dict) -> str:
+        """Prefer a proper GP name from data we already have."""
+        circuit = (snap.get("circuit") or "").lower()
+        country = (snap.get("country") or "").lower()
+        candidates = []
+        if self._upcoming_race:
+            candidates.append(self._upcoming_race)
+        candidates.extend(self._recent_races or [])
+        for race in candidates:
+            if not race:
+                continue
+            name = race.get("race_name") or ""
+            blob = " ".join([
+                name,
+                race.get("circuit") or "",
+                race.get("locality") or "",
+                race.get("country") or "",
+            ]).lower()
+            if circuit and circuit in blob:
+                return name
+            if country and country in blob:
+                return name
+        return ""
+
+    def _build_live_race_cards(self, snap: Dict) -> List[Image.Image]:
+        """Header + one row per driver, same layout as the finished-race grid.
+
+        f1-live: live_race
+        """
+        r = self._scroll_renderer
+        title = live_header_title(snap, self._live_race_name(snap))
+        cards = [r.render_live_header(title, snap.get("flag"))]
+        top_n = 10
+        try:
+            top_n = int((self.config.get("recent_races") or {}).get(
+                "top_finishers") or 10)
+        except (TypeError, ValueError):
+            top_n = 10
+        entries = snap.get("entries") or []
+        shown = list(entries[:top_n])
+        codes = {(e.get("code") or "").upper() for e in shown}
+        if self.favorite_driver and self.favorite_driver not in codes:
+            fav = next(
+                (e for e in entries
+                 if (e.get("code") or "").upper() == self.favorite_driver),
+                None)
+            if fav:
+                shown.append(fav)
+        leader_lap = snap.get("lap")
+        for entry in shown:
+            cards.append(r.render_race_row(
+                live_row_from_entry(entry, leader_lap)))
+        return cards
+
+    # ─── Vegas Mode ────────────────────────────────────────────────────
+
+    # Sections the marquee can show, in the order they are emitted. The keys
+    # are what a user puts in `vegas.sections`.
+    #
+    # Deliberately a small default. Contributing every prepared mode measured
+    # 114 cards / 14,592px on a 512px panel — near six minutes of uninterrupted
+    # F1 at 50px/s, because what the plugin's own rotation shows as eight
+    # separate screens the marquee splices into one unbroken block.
+    _VEGAS_SECTION_ORDER = (
+        "live_race",
+        "leaders",
+        "battles",
+        "spotlight",
+        "upcoming",
+        "last_race",
+        "driver_standings",
+        "constructor_standings",
+        "recent_races",
+        "qualifying",
+        "practice",
+        "sprint",
+        "calendar",
+    )
+    _VEGAS_DEFAULT_SECTIONS = ("upcoming", "last_race")
+
+    # Sections that are just one or more prepared scroll modes, concatenated.
+    # "upcoming" and "last_race" are not here: the first renders fresh so its
+    # countdown is current, the second comes from its own card list.
+    _VEGAS_SECTION_MODES = {
+        "leaders": ("championship_leaders",),
+        "battles": ("championship_battle", "constructor_battle"),
+        "spotlight": ("driver_spotlight", "team_spotlight"),
+        "driver_standings": ("driver_standings",),
+        "constructor_standings": ("constructor_standings",),
+        "recent_races": ("recent_races",),
+        "qualifying": ("qualifying",),
+        "practice": ("practice",),
+        "sprint": ("sprint",),
+        "calendar": ("calendar",),
+    }
+
+    def _vegas_sections(self) -> List[str]:
+        """
+        Which sections this plugin contributes to the marquee.
+
+        Unknown names are dropped with a warning rather than failing the whole
+        list, so one typo costs the user that section and not the plugin.
+        """
+        # The schema forbids a non-object here, but config.json is hand-edited
+        # often enough that a null or a stray list must not raise on the
+        # marquee's render path.
+        vegas_cfg = self.config.get("vegas") or {}
+        if not isinstance(vegas_cfg, dict):
+            self.logger.warning(
+                "vegas should be an object, got %r — using the default sections",
+                vegas_cfg)
+            return list(self._VEGAS_DEFAULT_SECTIONS)
+
+        raw = vegas_cfg.get("sections", self._VEGAS_DEFAULT_SECTIONS)
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, (list, tuple)):
+            self.logger.warning(
+                "vegas.sections should be a list, got %r — using the default",
+                raw)
+            return list(self._VEGAS_DEFAULT_SECTIONS)
+
+        wanted, unknown = [], []
+        for name in raw:
+            key = str(name).strip().lower()
+            if key in self._VEGAS_SECTION_ORDER:
+                wanted.append(key)
+            elif key:
+                unknown.append(key)
+
+        if unknown:
+            self.logger.warning(
+                "Ignoring unknown vegas.sections entries: %s (valid: %s)",
+                ", ".join(unknown), ", ".join(self._VEGAS_SECTION_ORDER))
+
+        # An empty list is a deliberate "keep F1 out of the marquee", so it is
+        # honoured; only a list with nothing usable in it falls back.
+        if not wanted and unknown:
+            return list(self._VEGAS_DEFAULT_SECTIONS)
+        return wanted
+
+    def _vegas_section_images(self, section: str) -> List[Image.Image]:
+        """Rendered cards for one marquee section, empty when it has no data."""
+        if section == "live_race":
+            return list(self._vegas_live_race_cards)
+
+        if section == "upcoming":
+            if not self._upcoming_race:
+                return []
+            # Rendered per call, not taken from a prepared mode, so the
+            # countdown is current every time the marquee rebuilds the strip.
+            images = [self._scroll_renderer.render_upcoming_race(
+                self._enrich_upcoming_with_countdown(self._upcoming_race))]
+            if self._scroll_renderer.show_circuit_info:
+                images.append(self._scroll_renderer.render_circuit_info_card(
+                    self._upcoming_race))
+            return images
+
+        if section == "last_race":
+            return list(self._vegas_last_race_cards)
+
+        images = []
+        for mode_key in self._VEGAS_SECTION_MODES.get(section, ()):
+            if self._scroll_manager.is_mode_prepared(mode_key):
+                images.extend(
+                    self._scroll_manager.get_vegas_items_for_mode(mode_key))
+        return images
+
+    def get_vegas_content(self) -> Optional[List[Image.Image]]:
+        """Return rendered cards for the configured marquee sections."""
+        # Local patch (repo patches/patch_f1_race_rows.py): emit in the order
+        # the user wrote in vegas.sections. This used to build a set and then
+        # walk _VEGAS_SECTION_ORDER, where "last_race" (index 4) precedes
+        # "qualifying" (index 9) -- so qualifying always played after the race,
+        # which is backwards: qualifying happens first. The configured list was
+        # already in the right order and was being discarded.
+        images = []
+        seen = set()
+        emitted = []
+        # f1-live: live_race -- always first when we have a snapshot, and
+        # hide last_race so the previous GP is not scrolling next to this one.
+        if self._vegas_live_race_cards:
+            images.extend(self._vegas_live_race_cards)
+            seen.add("live_race")
+            seen.add("last_race")
+            emitted.append("live_race")
+        for section in self._vegas_sections():
+            if section in seen:
+                continue
+            seen.add(section)
+            chunk = self._vegas_section_images(section)
+            if chunk:
+                emitted.append(section)
+                images.extend(chunk)
+        if images:
+            self.logger.info("vegas emit %s (%d images)",
+                             ",".join(emitted), len(images))
+
+        return images if images else None
+
+    def get_vegas_content_type(self) -> str:
+        """Return multi for scrolling content."""
+        return "multi"
+
+    def get_vegas_display_mode(self) -> VegasDisplayMode:
+        """Return SCROLL for continuous scrolling."""
+        return VegasDisplayMode.SCROLL
+
+    # ─── Dynamic Duration ──────────────────────────────────────────────
+
+    _SCROLL_MODES = frozenset({
+        "f1_driver_standings", "f1_constructor_standings",
+        "f1_recent_races", "f1_qualifying", "f1_practice",
+        "f1_sprint", "f1_calendar",
+    })
+
+    _MODE_KEY_MAP = {
+        "f1_driver_standings": "driver_standings",
+        "f1_constructor_standings": "constructor_standings",
+        "f1_recent_races": "recent_races",
+        "f1_qualifying": "qualifying",
+        "f1_practice": "practice",
+        "f1_sprint": "sprint",
+        "f1_calendar": "calendar",
+    }
+
+    def supports_dynamic_duration(self) -> bool:
+        """Enable dynamic duration for scrolling modes."""
+        dd = self.config.get("dynamic_duration", {})
+        if not isinstance(dd, dict) or not dd.get("enabled", True):
+            return False
+        return (self._current_display_mode is not None
+                and self._current_display_mode in self._SCROLL_MODES)
+
+    def is_cycle_complete(self) -> bool:
+        """Scroll cycle complete when ScrollHelper reports done."""
+        if not self._current_display_mode:
+            return True
+        mode_key = self._MODE_KEY_MAP.get(self._current_display_mode)
+        if not mode_key:
+            return True
+        return self._scroll_manager.is_scroll_complete(mode_key)
+
+    def reset_cycle_state(self) -> None:
+        """Reset scroll position for the current mode."""
+        super().reset_cycle_state()
+        if self._current_display_mode:
+            mode_key = self._MODE_KEY_MAP.get(self._current_display_mode)
+            if mode_key:
+                self._scroll_manager.reset_mode(mode_key)
+
+    # ─── Lifecycle ─────────────────────────────────────────────────────
+
+    def get_info(self) -> Dict[str, Any]:
+        """Return diagnostic info for the web UI."""
+        info = super().get_info()
+        info.update({
+            "name": "F1 Scoreboard",
+            "enabled_modes": self.modes,
+            "mode_count": len(self.modes),
+            "last_update": self._last_update,
+            "has_driver_standings": bool(self._driver_standings),
+            "has_constructor_standings": bool(self._constructor_standings),
+            "has_recent_races": bool(self._recent_races),
+            "has_upcoming_race": self._upcoming_race is not None,
+            "has_qualifying": self._qualifying is not None,
+            "has_practice": bool(self._practice_results),
+            "has_sprint": self._sprint is not None,
+            "has_calendar": bool(self._calendar),
+            "favorite_driver": self.favorite_driver,
+            "favorite_team": self.favorite_team,
+            "is_live": self._is_live,
+            "live_session": self._live_session,
+            "is_race_weekend": self._is_race_weekend,
+            "effective_update_interval": self._update_interval,
+        })
+        return info
+
+    def on_config_change(self, new_config):
+        """Handle config changes."""
+        super().on_config_change(new_config)
+
+        self.favorite_driver = new_config.get("favorite_driver", "").upper()
+        self.favorite_team = normalize_constructor_id(
+            new_config.get("favorite_team", ""))
+        self._base_update_interval = new_config.get("update_interval", 3600)
+        self._update_interval = self._base_update_interval
+        self.display_duration = new_config.get("display_duration", 30)
+        self.modes = self._build_enabled_modes()
+
+        # Re-resolve timezone in case global config changed. Kept in a shallow
+        # copy (never written back into `new_config`) so it never gets
+        # persisted as a stale plugin-level override.
+        self.timezone = self._resolve_timezone(new_config, self.cache_manager)
+        render_config = {**new_config, "timezone": self.timezone}
+
+        # Force re-render with new settings
+        scroll_cfg = render_config.get("scroll", {}) if isinstance(render_config.get("scroll"), dict) else {}
+        self._card_width = scroll_cfg.get("game_card_width", 128)
+        self.renderer = F1Renderer(
+            self.display_width, self.display_height,
+            render_config, self.logo_loader, self.logger)
+        self._scroll_renderer = F1Renderer(
+            self._card_width, self.display_height,
+            render_config, self.logo_loader, self.logger)
+        self._scroll_manager = ScrollDisplayManager(
+            self.display_manager, render_config, self.logger,
+            global_config=getattr(self, 'global_config', {}) or {})
+        self.enable_scrolling = self._scroll_manager is not None
+        self._scroll_content_sig = None
+        self._live_feed = self._make_live_feed(new_config)
+        self._live_feed_interval = self._live_poll_interval(new_config)
+        self._last_live_feed = 0.0
+        self._live_cards_sig = None
+        self._vegas_live_race_cards = []
+        self._live_snapshot = None
+
+        # Force data refresh
+        self._last_update = 0
+
+    def cleanup(self):
+        """Clean up resources."""
+        try:
+            self.logo_loader.clear_cache()
+            self.logger.info("F1 Scoreboard cleanup completed")
+        except Exception:
+            self.logger.exception("Error during F1 Scoreboard cleanup")
+        super().cleanup()
