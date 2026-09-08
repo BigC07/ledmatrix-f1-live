@@ -1030,12 +1030,28 @@ class F1Renderer:
         self._draw_text_outlined(draw, (x, top), pos_text, pos_font,
                                  fill=(200, 200, 200))
         px = x + self._tw(draw, pos_text, pos_font) + 3
-        # Sit the name on the number's baseline. Top-aligning it against a
-        # taller digit leaves the surname floating above the number.
-        name_h = self._th(draw, "A", self.fonts["position"])
-        name_y = top + max(0, ph - name_h)
         name = self._fit_driver_name(draw, entry, self.fonts["position"],
                                      content_max_x - px)
+        # Sit the number and the name on a common baseline, measured from the
+        # rendered GLYPHS. The number is 9x15 and the name 6x10, and offsetting
+        # by the difference in font height put the surname four rows low, so it
+        # read as detached from its own number. Qualifying escapes this by
+        # drawing both in one font.
+        #
+        # Do NOT use draw.textbbox() here: on these bitmap faces it returns the
+        # advance box, not the ink. Measured, "P4" in 9x15 reports (0,1,18,16)
+        # -- the full 15px box with a zero ink offset -- which makes any
+        # "ink-aligned" formula built on it collapse back to the box maths it
+        # was meant to replace. font.getmask().getbbox() gives the true extent:
+        # "P4" inks rows 2-11 of its box, "NORRIS" rows 1-7 of its own.
+        name_y = top + max(0, ph - self._th(draw, "A", self.fonts["position"]))
+        try:
+            pos_ink = pos_font.getmask(pos_text, mode="1").getbbox()
+            name_ink = self.fonts["position"].getmask(name, mode="1").getbbox()
+            if pos_ink and name_ink:
+                name_y = top + pos_ink[3] - name_ink[3]
+        except Exception:
+            pass    # keep the box-based fallback rather than fail to draw
         self._draw_text_outlined(draw, (px, name_y), name, self.fonts["position"],
                                  fill=(255, 255, 255))
 
