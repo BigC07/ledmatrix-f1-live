@@ -991,8 +991,12 @@ class F1ScoreboardPlugin(BasePlugin):
         f1-live: live_race
         """
         r = self._scroll_renderer
-        title = live_header_title(snap, self._live_race_name(snap))
-        cards = [r.render_live_header(title, snap.get("flag"))]
+        # Name only on the title line; lap and flag go to the subtitle so the
+        # LIVE chip has somewhere to sit.
+        name = self._live_race_name(snap)
+        title = (name.replace("Grand Prix", "GP").strip().upper() if name
+                 else (snap.get("circuit") or snap.get("country") or "RACE").upper())
+        cards = [r.render_live_header(title, snap.get("flag"), snap.get("lap"))]
         top_n = 10
         try:
             top_n = int((self.config.get("recent_races") or {}).get(
@@ -1012,7 +1016,7 @@ class F1ScoreboardPlugin(BasePlugin):
         leader_lap = snap.get("lap")
         for entry in shown:
             cards.append(r.render_race_row(
-                live_row_from_entry(entry, leader_lap)))
+                live_row_from_entry(entry, leader_lap), live=True))
         return cards
 
     # ─── Vegas Mode ────────────────────────────────────────────────────

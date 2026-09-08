@@ -116,6 +116,11 @@ def _team_color_bright(constructor_id: str, min_max: int = 150) -> tuple:
     return color
 
 
+# Live-block marker. Broadcast convention is red for "live"; the header still
+# spells out SC / VSC / RED, so the rail only has to say "this is happening now".
+_LIVE_RAIL = (255, 40, 40)
+
+
 class F1Renderer:
     """Renders F1 display cards as PIL Images."""
 
@@ -950,7 +955,8 @@ class F1Renderer:
             name.replace("Grand Prix", "GP").strip(), "GRAND PRIX",
             F1_RED, (40, 0, 0))
 
-    def render_live_header(self, title: str, flag: Optional[str] = None) -> Image.Image:
+    def render_live_header(self, title: str, flag: Optional[str] = None,
+                           lap: Optional[int] = None) -> Image.Image:
         """f1-live: live_race header. Same furniture as the finished-race
         name card; the flag chip (SC / VSC / RED) rides in the title and
         recolours the bar so it reads at a glance on a 32 px strip.
@@ -958,19 +964,42 @@ class F1Renderer:
         color = F1_RED
         bar = (40, 0, 0)
         chip = (flag or "").upper()
+        status = ""
         if chip == "SC":
-            color, bar = (255, 220, 0), (40, 30, 0)
-            if "· SC" not in title.upper():
-                title = "%s · SC" % title
+            color, bar, status = (255, 220, 0), (40, 30, 0), "SAFETY CAR"
         elif chip == "VSC":
-            color, bar = (255, 160, 0), (40, 20, 0)
-            if "· VSC" not in title.upper():
-                title = "%s · VSC" % title
+            color, bar, status = (255, 160, 0), (40, 20, 0), "VIRTUAL SC"
         elif chip == "RED":
-            color, bar = (255, 60, 60), (50, 0, 0)
-            if "· RED" not in title.upper():
-                title = "%s · RED" % title
-        return self._render_session_header(title, "", color, bar)
+            color, bar, status = (255, 60, 60), (50, 0, 0), "RED FLAG"
+
+        # The lap count and any flag go on the second line, which this card
+        # already has and was not using. Cramming them into the title made it
+        # 133px against 124 available before the LIVE chip was even drawn, so
+        # the chip landed on top of a truncated "ITALIAN GP · S".
+        sub_bits = []
+        if lap:
+            sub_bits.append("LAP %s" % lap)
+        if status:
+            sub_bits.append(status)
+        subtitle = "  ".join(sub_bits)
+
+        # Measure the chip first so the title truncates clear of it.
+        probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        chip_font = self.fonts["position"]
+        chip_w = self._tw(probe, "LIVE", chip_font) + 5
+        img = self._render_session_header(title, subtitle, color, bar,
+                                          reserve_right=chip_w)
+        draw = ImageDraw.Draw(img)
+        draw.fontmode = "1"
+        label = "LIVE"
+        f = chip_font
+        lw = self._tw(draw, label, f)
+        lh = self._th(draw, label, f)
+        lx = self.display_width - lw - 3
+        draw.rectangle([lx - 2, 2, self.display_width - 1, 3 + lh], fill=(150, 0, 0))
+        self._draw_text_outlined(draw, (lx, 3), label, f, fill=(255, 255, 255))
+        draw.rectangle([0, 0, self.display_width - 1, 1], fill=_LIVE_RAIL)
+        return img
 
     def _race_position_font(self):
         """Font for the finishing position on a race row.
@@ -1025,7 +1054,7 @@ class F1Renderer:
         self._race_name_font_cache = font
         return font
 
-    def render_race_row(self, entry: Dict) -> Image.Image:
+    def render_race_row(self, entry: Dict, live: bool = False) -> Image.Image:
         """One finisher, as a full card.
 
         Local patch (repo patches/patch_f1_race_rows.py). Deliberately NOT a
@@ -1137,6 +1166,16 @@ class F1Renderer:
         draw.rectangle([self.accent_bar_width, content_h - 2,
                         self.display_width - 1, content_h - 1],
                        fill=tuple(max(0, int(c * 0.4)) for c in tc))
+
+        # Live marker. A badge on the section's intro card alone would be seen
+        # almost never: one 128px card is on screen ~5s of a 342s strip cycle,
+        # so the header is up 1.5% of the time and a glance during a race lands
+        # on a driver row. A live row is otherwise indistinguishable from a
+        # finished-race row -- both show a gap. This rail runs unbroken along
+        # the top of every card in the live block, so the whole section reads as
+        # live from any glance. Drawn last so nothing paints over it.
+        if live:
+            draw.rectangle([0, 0, self.display_width - 1, 1], fill=_LIVE_RAIL)
         return img
 
     def render_favorite_race_card(self, race: Dict, result: Dict) -> Image.Image:
@@ -1694,7 +1733,8 @@ class F1Renderer:
                                        show_eliminated=True, session_label=session_label)
 
     def _render_session_header(self, title: str, subtitle: str,
-                               title_color: tuple, bar_color: tuple) -> Image.Image:
+                               title_color: tuple, bar_color: tuple,
+                               reserve_right: int = 0) -> Image.Image:
         """Shared layout for the qualifying/practice/sprint intro headers:
         colored top bar + F1 logo + title (+ optional subtitle). On tall panels
         the content group is vertically centered and the bar grows to contain it
@@ -1756,7 +1796,7 @@ class F1Renderer:
         # at 7x13 once shortened ("Italian GP" is 70px of 124), but the calendar
         # has outliers -- "United Arab Emirates GP" is 161px -- and a clipped
         # race name is worse than a smaller complete one.
-        avail = self.display_width - hx - 2
+        avail = self.display_width - hx - 2 - reserve_right
         if not self.is_tall and self._tw(draw, title, title_font) > avail:
             for candidate in (self.fonts["position"], self.fonts["detail"]):
                 if self._tw(draw, title, candidate) <= avail:
