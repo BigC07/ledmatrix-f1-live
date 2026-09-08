@@ -1940,7 +1940,15 @@ class F1Renderer:
                 d = int(countdown // 86400)
                 h = int((countdown % 86400) // 3600)
                 m = int((countdown % 3600) // 60)
-                ct = f"{d}D {h}H {m}M" if d > 0 else f"{h}H {m}M"
+                # Precision scaled to distance. This card is a frozen bitmap
+                # in the scroll strip and is only re-rendered when the strip
+                # rebuilds -- measured at once in 30 minutes -- so a minutes
+                # field on a multi-day countdown is false precision that
+                # visibly drifts: it read 49M while the truth was 45M. Above a
+                # day the minutes are noise anyway; the hours figure changes
+                # slowly enough that a stale card stays honest. Inside a day
+                # minutes matter, so they stay.
+                ct = f"{d}D {h}H" if d > 0 else f"{h}H {m}M"
                 ct = self._truncate(draw, ct, self.fonts["detail"], text_max_x - x)
                 self._draw_text_outlined(draw, (x, cnt_y), ct, self.fonts["detail"],
                                          fill=(50, 230, 80))
