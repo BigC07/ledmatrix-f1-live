@@ -89,6 +89,10 @@ _RATE_LIMIT_COOLOFF = 120   # seconds parked after a 429
 # lookback from the replay instant otherwise. Only the newest row per driver
 # is ever used, so a window costs nothing.
 _HIGH_VOLUME = ("intervals",)
+
+# Which field carries a row's timestamp. /laps stamps date_start, everything
+# else uses date. The incremental cursor needs this to advance per endpoint.
+_DATE_KEY = {"laps": "date_start"}
 _REPLAY_LOOKBACK = timedelta(minutes=10)
 
 # Do not hammer OpenF1 looking for a race that cannot be running. We still
@@ -189,6 +193,11 @@ class LiveRaceFeed:
         # f1-live: fixture_dir -- JSON dumps of OpenF1 endpoints, so tests
         # never spend the rate limit. Live polling still uses _get() HTTP.
         self.fixture_dir = fixture_dir
+        # Folded state for the single-value endpoints, carried across polls so
+        # they can be fetched incrementally like the per-driver ones.
+        self._max_lap = None
+        self._laps_per_driver = {}
+        self._flag_state_cache = (None, None)
 
         self._drivers: Dict[int, Dict[str, Any]] = {}
         self._drivers_for_session: Optional[int] = None
@@ -353,6 +362,9 @@ class LiveRaceFeed:
         self._merged_session = session_key
         self._grid = {}
         self._grid_when = {}
+        self._max_lap = None
+        self._laps_per_driver = {}
+        self._flag_state_cache = (None, None)
 
     def _note_grid(self, num: int, when: datetime, position: Any) -> None:
         """Keep the earliest position we have seen for this driver."""
@@ -380,6 +392,38 @@ class LiveRaceFeed:
         if start and earliest > start + timedelta(minutes=2):
             return {}
         return dict(self._grid)
+
+    def _incremental(self, path: str, session_key: int) -> List[Dict]:
+        """Rows for `path` that have appeared since the last poll.
+
+        Running order and gaps fold per driver in _rolling_latest(). Lap count
+        and flag state fold into single values instead, but they need the same
+        cursor. Without it they were almost the entire cost of a race: /laps is
+        ~500 KB and /race_control ~40 KB for one Grand Prix, so re-pulling both
+        every 20 s for two hours is ~190 MB across 720 full-history requests --
+        98% of the traffic, and the exact shape of request that earned a 429
+        during development.
+
+        Replay and fixtures still read the session whole; both are immutable.
+        """
+        if self._merged_session != session_key:
+            self._reset_session(session_key)
+        params = {"session_key": session_key}
+        cursor = self._cursor.get(path)
+        if cursor and not self.replay_at and not self.fixture_dir:
+            params["date>"] = cursor
+        rows = self._get(path, **params)
+        if not rows:
+            return []
+        date_key = _DATE_KEY.get(path, "date")
+        newest = cursor
+        for row in rows:
+            iso = row.get(date_key)
+            if iso and (newest is None or iso > newest):
+                newest = iso
+        if newest and not self.replay_at and not self.fixture_dir:
+            self._cursor[path] = newest
+        return rows
 
     def _rolling_latest(self, path: str, session_key: int) -> Dict[int, Dict]:
         """Newest row per driver for `path`, maintained incrementally.
@@ -528,11 +572,9 @@ class LiveRaceFeed:
         unless a caller supplies one. Showing "LAP 32" alone is honest;
         inventing a denominator is not.
         """
-        rows = self._get("laps", session_key=session_key)
-        if not rows:
-            return None, None, {}
-        best = 0
-        per: Dict[int, int] = {}
+        rows = self._incremental("laps", session_key)
+        best = self._max_lap or 0
+        per: Dict[int, int] = self._laps_per_driver
         for row in rows:
             when = _parse(row.get("date_start", ""))
             if cutoff and when and when > cutoff:
@@ -542,7 +584,10 @@ class LiveRaceFeed:
             num = row.get("driver_number")
             if num is not None:
                 per[num] = max(per.get(num, 0), n)
-        return (best or None), None, per
+        # Lap counts only climb, so folding the new rows into the running maxima
+        # lands in the same place as re-reading the whole session.
+        self._max_lap = best or self._max_lap
+        return self._max_lap, None, dict(per)
 
     def _flag_state(self, session_key: int, cutoff: Optional[datetime]):
         """Race-wide flag: SC, VSC, RED. Sector yellows are ignored.
@@ -554,9 +599,10 @@ class LiveRaceFeed:
         `VSC DEPLOYED`, `VSC ENDING` -- not the longer phrases the first
         draft matched.
         """
-        rows = self._get("race_control", session_key=session_key)
+        rows = self._incremental("race_control", session_key)
         if not rows:
-            return None, None
+            # No new messages means the track status has not changed.
+            return self._flag_state_cache
         events = []
         for row in rows:
             when = _parse(row.get("date", ""))
@@ -564,11 +610,13 @@ class LiveRaceFeed:
                 continue
             events.append((when, row))
         if not events:
-            return None, None
+            return self._flag_state_cache
         events.sort(key=lambda x: x[0])
 
-        flag = None
-        flag_msg = None
+        # Start from the last known status and apply only what is new. The walk
+        # below is chronological, so replaying just the new messages on top of
+        # the carried state lands where replaying all of them would.
+        flag, flag_msg = self._flag_state_cache
         for _, row in events:
             msg = (row.get("message") or "")
             up = msg.upper()
@@ -601,4 +649,5 @@ class LiveRaceFeed:
                 continue
             if raw_flag == "CHEQUERED" or "SESSION FINISHED" in up:
                 flag, flag_msg = None, None
+        self._flag_state_cache = (flag, flag_msg)
         return flag, flag_msg
