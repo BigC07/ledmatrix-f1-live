@@ -1838,6 +1838,44 @@ class F1Renderer:
 
     # ─── Upcoming Race Card ────────────────────────────────────────────
 
+    def _countdown_text(self, race: Dict):
+        """(text, colour) for the upcoming card's countdown, or None.
+
+        Precision is scaled to distance. This card is a frozen bitmap in the
+        scroll strip and is only re-rendered when the strip rebuilds -- measured
+        at once in thirty minutes -- so a minutes field on a multi-day countdown
+        is false precision that visibly drifts: it read 49M while the truth was
+        45M. Above a day the minutes are noise and the hours figure changes
+        slowly enough that a stale card stays honest. Inside a day minutes
+        matter, so they stay. Under an hour it becomes a word.
+        """
+        countdown = race.get("countdown_seconds")
+        if countdown is None or countdown < 0:
+            return None
+        if countdown < 3600:
+            labels = {"Race": "RACE DAY!", "Qual": "QUALIFYING", "FP1": "FP1 SOON",
+                      "FP2": "FP2 SOON", "FP3": "FP3 SOON", "SS": "S.QUALI",
+                      "SR": "SPRINT"}
+            # No pulse here. The old code varied the colour by sin(time.time()),
+            # which cannot animate: the card is rendered once into the strip and
+            # then scrolls as a fixed bitmap.
+            return labels.get(race.get("next_session_type", "Race"), "RACE DAY!"), (235, 235, 0)
+        d = int(countdown // 86400)
+        h = int((countdown % 86400) // 3600)
+        m = int((countdown % 3600) // 60)
+        return (f"{d}D {h}H" if d > 0 else f"{h}H {m}M"), (50, 230, 80)
+
+    def _fit_font(self, draw, text: str, avail_w: int, tiers):
+        """Largest of `tiers` whose rendering of `text` fits avail_w."""
+        for name, size in tiers:
+            try:
+                f = self._load_font(name, size)
+            except Exception:
+                continue
+            if f is not None and self._tw(draw, text, f) <= avail_w:
+                return f
+        return self.fonts["detail"]
+
     def render_upcoming_race(self, race: Dict) -> Image.Image:
         """
         Layout:
@@ -1873,6 +1911,27 @@ class F1Renderer:
         # Red left accent stripe
         draw.rectangle([0, 0, 2, self.display_height - 1], fill=F1_RED)
         x = 4
+
+        # The countdown is the point of this card, so it is laid out FIRST and
+        # the text rows take what is left. It used to be drawn last, in the 4x6
+        # "detail" face, in a thin strip along the bottom -- the smallest thing
+        # on a card whose whole job is to say how long until the next race,
+        # while a sponsor prefix ("Tag Heuer Spanish GP") had a full line at the
+        # same size. With no circuit map the right half of the card was empty.
+        #
+        # With the full width available it moves to a right-hand zone, vertically
+        # centred, in the largest face that fits. With a map drawn there is no
+        # room for that, so it stays in the bottom strip.
+        cd = self._countdown_text(race)
+        cd_font = None
+        cd_wide = cd is not None and circuit_img is None and not self.is_tall
+        if cd_wide:
+            zone = int(self.display_width * 0.62)      # right-hand share
+            cd_font = self._fit_font(draw, cd[0], zone,
+                                     [("10x20.bdf", 20), ("9x15.bdf", 15),
+                                      ("7x13.bdf", 13), ("6x10.bdf", 10)])
+            cd_w = self._tw(draw, cd[0], cd_font)
+            text_max_x = self.display_width - cd_w - 6
         text_w = text_max_x - x
 
         # ── Build the stacked info rows (headline, GP name, next session) ──
@@ -1889,32 +1948,56 @@ class F1Renderer:
             headline = self._truncate(draw, headline, self.fonts["header"], text_w)
         rows = [(headline, self.fonts["header"], (255, 255, 255))]
 
-        gp_short = race_name.replace("Grand Prix", "GP")
-        if gp_short:
-            rows.append((self._truncate(draw, gp_short, self.fonts["small"], text_w),
+        # Second line: the CITY, not the race's marketing name. The headline
+        # already carries the country, so "Tag Heuer Spanish GP" repeats it and
+        # spends the width on a sponsor -- and once the countdown takes its
+        # zone there is not room for it, so it truncated to "Tag Heuer Sp..".
+        # The city actually disambiguates: Spain has two rounds in 2026 and
+        # this one is Madrid. Falls back to the race name where no city is given.
+        sub = (city or race_name.replace("Grand Prix", "GP")).upper()
+        if sub:
+            rows.append((self._truncate(draw, sub, self.fonts["small"], text_w),
                          self.fonts["small"], (120, 120, 120)))
 
         next_type = race.get("next_session_type", "")
         next_date = next((s["date"] for s in race.get("sessions", [])
                           if s.get("type_abbr") == next_type and s.get("date")), "")
         if next_type and next_date:
+            # 4 chars max. The left column is 58px once the countdown takes its
+            # zone, and "QUALI SAT 2:00P" measured 60 -- two pixels over, which
+            # would have eaten the meridiem off the end of the time.
             abbrs = {"FP1": "FP1", "FP2": "FP2", "FP3": "FP3",
-                     "Qual": "QUALI", "Race": "RACE", "SS": "S.Q", "SR": "SPR"}
+                     "Qual": "QUAL", "Race": "RACE", "SS": "SQ", "SR": "SPR"}
             sess_label = abbrs.get(next_type, next_type)
             try:
                 dt = self._to_local_dt(next_date)
-                time_str = dt.strftime("%a %I:%M%p").upper().lstrip("0")
-                next_line = f"{sess_label}: {time_str}"
+                # "FP1 FRI 11:30A" rather than "FP1: FRI 11:30AM" -- the colon
+                # and the M cost 8px the narrowed column does not have, and the
+                # single letter is unambiguous.
+                # Strip the leading zero from the HOUR, not from the whole
+                # string. The original .lstrip("0") ran on "SAT 02:00PM", which
+                # begins with the day, so it never removed anything and the
+                # card rendered "QUAL SAT 02:.." -- four pixels of dead zero
+                # that pushed the meridiem off the end.
+                day = dt.strftime("%a").upper()
+                clock = dt.strftime("%I:%M%p").upper().lstrip("0")[:-1]
+                time_str = f"{day} {clock}"
+                # A 12:xx session runs two pixels past the column ("QUAL SAT
+                # 12:30P" is 60 against 58). Drop the day rather than let the
+                # meridiem be clipped: the countdown beside it already says how
+                # far away this is, so the weekday is the least-loaded token
+                # here, while "P" versus a truncated nothing is not recoverable.
+                if self._tw(draw, f"{sess_label} {time_str}",
+                            self.fonts["small"]) > text_w:
+                    time_str = clock
+                next_line = f"{sess_label} {time_str}"
             except (ValueError, TypeError):
                 next_line = f"NEXT: {sess_label}"
             rows.append((self._truncate(draw, next_line, self.fonts["small"], text_w),
                          self.fonts["small"], (80, 200, 255)))
 
-        # Reserve a bottom strip for the countdown, then spread the info rows to
-        # fill the remaining height on tall panels (packed from top on 32-high).
-        countdown = race.get("countdown_seconds")
-        has_countdown = countdown is not None and countdown >= 0
-        bottom_reserve = (self._th(draw, "A", self.fonts["detail"]) + 4) if has_countdown else 0
+        # Rows fill the height; only the narrow layout reserves a bottom strip.
+        bottom_reserve = (self._th(draw, "A", self.fonts["detail"]) + 4)             if (cd is not None and not cd_wide) else 0
         avail_h = self.display_height - bottom_reserve
         row_heights = [self._th(draw, t, f) for t, f, _ in rows]
         ys = self._spread_ys(avail_h, row_heights, top_pad=1)
@@ -1924,34 +2007,21 @@ class F1Renderer:
             if ry + rh <= avail_h:
                 self._draw_text_outlined(draw, (x, ry), text, font, fill=fill)
 
-        # Countdown (bottom, green)
-        if countdown is not None and countdown >= 0:
-            cnt_y = self.display_height - self._th(draw, "A", self.fonts["detail"]) - 2
-            if countdown < 3600:
-                sess_type = race.get("next_session_type", "Race")
-                labels = {"Race": "RACE DAY!", "Qual": "QUALIFYING", "FP1": "FP1 SOON",
-                          "FP2": "FP2 SOON", "FP3": "FP3 SOON", "SS": "S.QUALI", "SR": "SPRINT"}
-                label = labels.get(sess_type, "RACE DAY!")
-                pulse = max(150, min(255, int(180 + 75 * math.sin(time.time() * 3))))
-                label = self._truncate(draw, label, self.fonts["detail"], text_max_x - x)
-                self._draw_text_outlined(draw, (x, cnt_y), label, self.fonts["detail"],
-                                         fill=(pulse, pulse, 0))
+        if cd is not None:
+            cd_text, cd_fill = cd
+            if cd_wide:
+                fh = self._th(draw, cd_text, cd_font)
+                cw = self._tw(draw, cd_text, cd_font)
+                self._draw_text_outlined(
+                    draw, (self.display_width - cw - 3,
+                           max(0, (self.display_height - fh) // 2)),
+                    cd_text, cd_font, fill=cd_fill)
             else:
-                d = int(countdown // 86400)
-                h = int((countdown % 86400) // 3600)
-                m = int((countdown % 3600) // 60)
-                # Precision scaled to distance. This card is a frozen bitmap
-                # in the scroll strip and is only re-rendered when the strip
-                # rebuilds -- measured at once in 30 minutes -- so a minutes
-                # field on a multi-day countdown is false precision that
-                # visibly drifts: it read 49M while the truth was 45M. Above a
-                # day the minutes are noise anyway; the hours figure changes
-                # slowly enough that a stale card stays honest. Inside a day
-                # minutes matter, so they stay.
-                ct = f"{d}D {h}H" if d > 0 else f"{h}H {m}M"
-                ct = self._truncate(draw, ct, self.fonts["detail"], text_max_x - x)
-                self._draw_text_outlined(draw, (x, cnt_y), ct, self.fonts["detail"],
-                                         fill=(50, 230, 80))
+                cnt_y = self.display_height - self._th(draw, "A", self.fonts["detail"]) - 2
+                self._draw_text_outlined(
+                    draw, (x, cnt_y),
+                    self._truncate(draw, cd_text, self.fonts["detail"], text_max_x - x),
+                    self.fonts["detail"], fill=cd_fill)
 
         return img
 
