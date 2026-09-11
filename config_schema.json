@@ -522,6 +522,23 @@
           ],
           "description": "Which live sessions get live cards. Race covers the Grand Prix and the sprint. Practice and qualifying show the order by best lap: the time to beat, then each driver's gap to it."
         },
+        "result_sessions": {
+          "type": "array",
+          "title": "Session Results",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Practice",
+              "Qualifying"
+            ]
+          },
+          "uniqueItems": true,
+          "default": [
+            "Practice",
+            "Qualifying"
+          ],
+          "description": "Finished sessions whose final order stays on the ticker, drawn like the qualifying cards, until the next session goes live. From F1's own feed. Race results come from the last race section instead. An empty list turns this off."
+        },
         "poll_interval": {
           "x-advanced": true,
           "type": "integer",
@@ -565,6 +582,7 @@
       "x-propertyOrder": [
         "source",
         "session_types",
+        "result_sessions",
         "poll_interval",
         "replay_session_key",
         "replay_at",

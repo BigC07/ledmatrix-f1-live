@@ -69,9 +69,9 @@ def recording():
     raise SystemExit("recording not found; looked in %s" % CANDIDATES)
 
 
-def replay(clock, types=("Practice",), before=None):
+def replay(clock, types=("Practice",), before=None, **kw):
     """Feed the recording in, holding back deltas stamped at or after `before`."""
-    feed = SignalRLiveFeed(session_types=types, http=BoomHTTP(), now_fn=clock)
+    feed = SignalRLiveFeed(session_types=types, http=BoomHTTP(), now_fn=clock, **kw)
     for msg in recording():
         if before is not None and msg.get("type") == 1:
             stamp = _parse_utc((msg.get("arguments") or [None] * 3)[2])
@@ -295,6 +295,89 @@ def test_qualifying_segments():
         check("Q2 gap, not Q1", e[1]["gap_to_leader"] == 0.188, e[1]["gap_to_leader"])
 
 
+def test_qualifying_last_segment_wins():
+    """The top ten are classified on their Q3 lap even when a Q2 lap was
+    quicker, the rest on the segment that knocked them out. Shape as above."""
+    result = {
+        "SessionInfo": {"Type": "Qualifying", "Name": "Qualifying", "Path": "2026/spain/q/"},
+        "SessionStatus": {"Status": "Started"},
+        "Heartbeat": {"Utc": T0.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")},
+        "DriverList": {"63": {"Tla": "RUS"}, "12": {"Tla": "ANT"}, "44": {"Tla": "HAM"}},
+        "TimingData": {"SessionPart": 3, "Lines": {
+            # Quicker in Q2 than in Q3; the top-level best lap is that Q2 lap.
+            "63": {"Position": "1", "BestLapTime": {"Value": "1:32.950"},
+                   "BestLapTimes": [{"Value": "1:33.900"}, {"Value": "1:32.950"},
+                                    {"Value": "1:33.100"}],
+                   "Stats": [{"TimeDiffToFastest": "+0.300"}, {"TimeDiffToFastest": ""},
+                             {"TimeDiffToFastest": ""}]},
+            # No Stats for Q3 yet: the gap comes from the top level.
+            "12": {"Position": "2", "TimeDiffToFastest": "+0.150",
+                   "BestLapTimes": [{"Value": "1:34.000"}, {"Value": "1:33.300"},
+                                    {"Value": "1:33.250"}],
+                   "Stats": [{"TimeDiffToFastest": "+0.400"}, {"TimeDiffToFastest": "+0.350"}]},
+            # Out in Q2, on a lap slower than the Q1 one the top level carries.
+            "44": {"Position": "11", "BestLapTime": {"Value": "1:33.600"},
+                   "BestLapTimes": [{"Value": "1:33.600"}, {"Value": "1:33.700"}, {"Value": ""}],
+                   "Stats": [{"TimeDiffToFastest": "+0.500"}, {"TimeDiffToFastest": "+0.750"},
+                             {"TimeDiffToFastest": ""}]}}},
+    }
+    feed = SignalRLiveFeed(session_types=("Qualifying",), http=BoomHTTP(),
+                           now_fn=Clock(T0 + timedelta(seconds=5)))
+    feed.feed_message({"type": 3, "invocationId": "0", "result": result})
+    snap = feed.state()
+    check("qualifying with both shapes is live", snap is not None)
+    if not snap:
+        return
+    e = {x["code"]: x for x in snap["entries"]}
+    check("Q3 lap beats a quicker top-level best lap", e["RUS"]["best_lap"] == "1:33.100",
+          e["RUS"]["best_lap"])
+    check("pole has no gap, not an older segment's", e["RUS"]["gap_to_leader"] is None,
+          e["RUS"]["gap_to_leader"])
+    check("out in Q2: the Q2 lap", e["HAM"]["best_lap"] == "1:33.700", e["HAM"]["best_lap"])
+    check("out in Q2: the Q2 gap", e["HAM"]["gap_to_leader"] == 0.75, e["HAM"]["gap_to_leader"])
+    check("no Stats for the segment: the top-level gap", e["ANT"]["gap_to_leader"] == 0.15,
+          e["ANT"]["gap_to_leader"])
+
+
+# ── the final order ────────────────────────────────────────────────────
+def test_final_snapshot_fp1():
+    """The manager keeps the last practice or qualifying order on the ticker
+    until the next session starts. final_snapshot() is where it gets it."""
+    snap = replay(Clock(FLAG + timedelta(seconds=90))).final_snapshot()
+    check("FP1's final order is there after the flag", snap is not None)
+    if snap:
+        e = snap["entries"]
+        check("final order: whole field", len(e) == 22, len(e))
+        check("final order: named", snap["session_name"] == "Practice 1", snap["session_name"])
+        check("final order: marked finished", snap["finished"] is True, snap["finished"])
+        check("final order: P1 has a lap time",
+              bool(re.match(r"^\d:\d\d\.\d{3}$", e[0]["best_lap"] or "")), e[0]["best_lap"])
+    running = replay(Clock(FLAG - timedelta(seconds=1)), before=FLAG)
+    check("no final order while the session runs", running.final_snapshot() is None)
+    race_only = replay(Clock(FLAG + timedelta(seconds=90)), types=("Race",))
+    check("kept where only races get live cards", race_only.final_snapshot() is not None)
+
+
+def test_final_snapshot_outlives_hold():
+    feed = replay(Clock(FLAG))
+    feed._now = Clock(FLAG + timedelta(hours=2))
+    check("two hours on, the live board is gone", feed.state() is None)
+    snap = feed.final_snapshot()
+    check("but the final order is not", snap is not None and len(snap["entries"]) == 22,
+          snap and len(snap["entries"]))
+
+
+def test_final_snapshot_types():
+    feed = race_feed()
+    feed_delta(feed, "SessionStatus", {"Status": "Finished", "Started": "Finished"},
+               T0 + timedelta(seconds=2))
+    snap = feed.state()
+    check("the race is over and held", snap is not None and snap["finished"])
+    check("but a race's result is not kept by default", feed.final_snapshot() is None)
+    off = replay(Clock(FLAG + timedelta(seconds=90)), result_types=())
+    check("result_types=() keeps no practice order", off.final_snapshot() is None)
+
+
 # ── the thread, against a fake hub ─────────────────────────────────────
 class FakeResponse:
     def __init__(self, status=200, body=b"", payload=None):
@@ -362,6 +445,20 @@ def test_closed_connection_waits_before_reconnecting():
     run_thread_for(feed, 2.5)
     check("a connection the server closes is not retried at once",
           hub.negotiations == 1, hub.negotiations)
+
+
+def test_thread_connects_for_results():
+    """With live cards for races only, a practice must still be joined, or
+    there is no final order for final_snapshot() to hand over."""
+    hub = FakeHub()
+    feed = SignalRLiveFeed(session_types=("Race",), result_types=("Practice",), http=hub)
+    run_thread_for(feed, 1.5)
+    check("race-only cards still join a practice for its result",
+          hub.negotiations == 1, hub.negotiations)
+    hub = FakeHub()
+    feed = SignalRLiveFeed(session_types=("Race",), result_types=(), http=hub)
+    run_thread_for(feed, 1.5)
+    check("and do not when no results are kept", hub.negotiations == 0, hub.negotiations)
 
 
 def test_session_status_two_fields():

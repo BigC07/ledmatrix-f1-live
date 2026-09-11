@@ -118,6 +118,13 @@ class F1ScoreboardPlugin(BasePlugin):
         self._vegas_live_race_cards: List[Image.Image] = []
         self._live_snapshot: Optional[Dict] = None
         self._live_cards_sig: Optional[str] = None
+        # f1-live: last_session -- the final order of the last finished practice
+        # or qualifying, from F1's feed, kept until the next session goes live.
+        # Persisted, so a restart between sessions does not lose it.
+        self._last_session: Optional[Dict] = self._restore_last_session()
+        self._last_session_sig: Optional[str] = None
+        self._last_session_dropped = None
+        self._vegas_last_session_cards: List[Image.Image] = []
 
         # Live session state
         self._is_live: bool = False
@@ -188,7 +195,8 @@ class F1ScoreboardPlugin(BasePlugin):
         types = cfg.get("session_types") or ["Race"]
         if not isinstance(types, (list, tuple)):
             types = ["Race"]
-        feed = SignalRLiveFeed(logger=self.logger, session_types=types)
+        feed = SignalRLiveFeed(logger=self.logger, session_types=types,
+                               result_types=self._result_session_types(cfg))
         feed.start()
         return feed
 
@@ -201,6 +209,122 @@ class F1ScoreboardPlugin(BasePlugin):
                 stop()
             except Exception:
                 pass
+
+    # ─── Last session result (F1 feed) ─────────────────────────────────
+    # f1-live: last_session. Asked for on 2026-09-11 after FP2: keep the final
+    # order of the last finished practice or qualifying on the ticker, drawn
+    # like the qualifying cards, until the next session goes live. From F1's
+    # feed, not OpenF1, which locks everyone out while any session runs.
+    _LAST_SESSION_KEY = "f1_live_last_session"
+    # FP2 to FP3 is about 18 h and qualifying to the race about 22 h, so this
+    # only bites when the next session's result was never captured.
+    _LAST_SESSION_TTL = 36 * 3600
+
+    @staticmethod
+    def _result_session_types(live_cfg: Optional[Dict]) -> List[str]:
+        raw = (live_cfg or {}).get("result_sessions", ["Practice", "Qualifying"])
+        if not isinstance(raw, (list, tuple)):
+            return ["Practice", "Qualifying"]
+        return [str(t) for t in raw if str(t).lower() in ("practice", "qualifying")]
+
+    def _restore_last_session(self) -> Optional[Dict]:
+        cm = getattr(self, "cache_manager", None)
+        try:
+            data = cm.get(self._LAST_SESSION_KEY, max_age=self._LAST_SESSION_TTL) if cm else None
+        except Exception:
+            return None
+        return data if isinstance(data, dict) and data.get("entries") else None
+
+    @staticmethod
+    def _last_session_signature(snap: Optional[Dict]) -> str:
+        if not snap:
+            return "none"
+        payload = [snap.get("session_key"), snap.get("session_name"),
+                   [(e.get("position"), e.get("code"), e.get("best_lap"),
+                     e.get("gap_to_leader")) for e in (snap.get("entries") or [])]]
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+    def _set_last_session(self, snap: Optional[Dict]) -> None:
+        """Store or drop the result, touching the cache only when it changed."""
+        if self._last_session_signature(snap) == self._last_session_signature(self._last_session):
+            return
+        if snap:
+            snap = dict(snap, captured_at=time.time())
+        self._last_session = snap
+        cm = getattr(self, "cache_manager", None)
+        try:
+            if snap:
+                cm.set(self._LAST_SESSION_KEY, snap, ttl=self._LAST_SESSION_TTL)
+            else:
+                cm.delete(self._LAST_SESSION_KEY)
+        except Exception as e:
+            self.logger.debug("Session result not persisted: %s", e)
+
+    def _poll_last_session(self, live: Optional[Dict]) -> None:
+        """Called from _poll_live_race() on the update tick, never on the render path."""
+        stored = self._last_session
+        wanted = self._result_session_types(self.config.get("live") or {})
+        if not wanted:
+            self._set_last_session(None)
+        elif stored:
+            # Another session going live makes the stored one history.
+            if live and live.get("session_key") != stored.get("session_key"):
+                self.logger.info("%s is live; dropping the %s result",
+                                 live.get("session_name"), stored.get("session_name"))
+                self._last_session_dropped = stored.get("session_key")
+                self._set_last_session(None)
+            elif time.time() - (stored.get("captured_at") or 0) > self._LAST_SESSION_TTL:
+                self._last_session_dropped = stored.get("session_key")
+                self._set_last_session(None)
+        if wanted:
+            final_fn = getattr(self._live_feed, "final_snapshot", None)
+            final = final_fn() if callable(final_fn) else None
+            # The feed holds a finished session until a new one replaces it, so
+            # one already dropped must not come straight back.
+            if (final and final.get("entries")
+                    and final.get("session_key") != self._last_session_dropped):
+                self._set_last_session(final)
+        sig = self._last_session_signature(self._last_session)
+        if sig != self._last_session_sig:
+            self._last_session_sig = sig
+            self._vegas_last_session_cards = (
+                self._build_session_result_cards(self._last_session)
+                if self._last_session else [])
+            if self._last_session:
+                self.logger.info(
+                    "Session result cards: %s %s n=%d",
+                    self._last_session.get("session_name"),
+                    ",".join(e.get("code", "?") for e in self._last_session["entries"][:8]),
+                    len(self._vegas_last_session_cards))
+
+    def _build_session_result_cards(self, snap: Dict) -> List[Image.Image]:
+        # f1-live: last_session. Header plus one row per driver, drawn with the
+        # qualifying section card and row because the result was asked to look
+        # exactly like the Q3 qualifying results. render_practice_entry is the
+        # same _render_driver_row a Q3 row uses -- time left, gap right -- and
+        # was byte-identical to the live Q3 cards on the Pi.
+        r = self._scroll_renderer
+        race = snap.get("meeting_name") or self._live_race_name(snap) or ""
+        name = str(snap.get("session_name") or "").strip()
+        if name.lower() == "qualifying":
+            title = "QUALIFYING - Q3"    # the top ten are the Q3 runners
+        else:
+            title = (name or "SESSION").upper()
+        cards = [r.render_session_result_header(title, race)]
+        for e in (snap.get("entries") or [])[:10]:
+            gap = e.get("gap_to_leader")
+            # A fresh dict with no grid key: show_position_delta is on, and a
+            # grid would draw a places-gained figure no Q3 row carries.
+            cards.append(r.render_practice_entry({
+                "position": e.get("position"),
+                "last_name": e.get("last_name") or "",
+                "code": e.get("code") or "",
+                "constructor_id": e.get("constructor_id") or "",
+                "best_lap": e.get("best_lap") or "",
+                "gap": ("+%.3f" % gap) if isinstance(gap, (int, float)) and gap > 0 else "",
+            }))
+        return cards
 
     def _resolve_timezone(self, config: Dict, cache_manager, plugin_manager=None) -> str:
         """Resolve timezone: plugin config → global config → system zone → UTC.
@@ -951,6 +1075,10 @@ class F1ScoreboardPlugin(BasePlugin):
         f1-live: live_race. Called from update() only.
         """
         snap = self._live_feed.state()
+        try:
+            self._poll_last_session(snap)
+        except Exception as e:
+            self.logger.warning("Session result error: %s", e, exc_info=True)
         sig = self._live_cards_signature(snap)
         self._live_snapshot = snap
         if sig == self._live_cards_sig:
@@ -1183,6 +1311,17 @@ class F1ScoreboardPlugin(BasePlugin):
             seen.add("live_race")
             seen.add("last_race")
             emitted.append("live_race")
+        # f1-live: last_session -- the last finished practice or qualifying,
+        # from F1's feed, first until the next session goes live. A stored
+        # qualifying result hides the qualifying section: that is the same
+        # session from Jolpica once it catches up, and the previous weekend's
+        # until then.
+        elif self._vegas_last_session_cards:
+            images.extend(self._vegas_last_session_cards)
+            seen.add("last_session")
+            emitted.append("last_session")
+            if str((self._last_session or {}).get("session_type") or "").lower() == "qualifying":
+                seen.add("qualifying")
         for section in self._vegas_sections():
             if section in seen:
                 continue
@@ -1314,6 +1453,10 @@ class F1ScoreboardPlugin(BasePlugin):
         self._live_cards_sig = None
         self._vegas_live_race_cards = []
         self._live_snapshot = None
+        # The renderer was just replaced, so the stored result's cards are
+        # stale even though the result is not.
+        self._last_session_sig = None
+        self._vegas_last_session_cards = []
 
         # Force data refresh
         self._last_update = 0

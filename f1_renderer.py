@@ -1824,6 +1824,16 @@ class F1Renderer:
                                          fill=(190, 190, 190))
         return img
 
+    def render_session_result_header(self, title: str, race_name: str = "") -> Image.Image:
+        # f1-live: last_session. The qualifying header card for any finished
+        # session: same colours and layout as render_qualifying_header, gold on
+        # a dark purple bar, the session on the big line and the Grand Prix
+        # under it. A practice result was asked to look exactly like the Q3
+        # qualifying results (2026-09-11).
+        return self._render_session_header(
+            title, race_name.replace("Grand Prix", "GP").strip(),
+            (255, 215, 0), (15, 0, 30))
+
     def render_qualifying_header(self, session_label: str = "Q3", race_name: str = "") -> Image.Image:
         subtitle = race_name.replace("Grand Prix", "GP") if race_name else ""
         return self._render_session_header(f"QUALIFYING - {session_label}", subtitle,

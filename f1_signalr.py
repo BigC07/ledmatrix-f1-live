@@ -56,7 +56,8 @@ appends message 54 to the list the initial state delivered.
 
 Between sessions this costs two tiny public GETs a minute. The thread does not
 connect unless StreamingStatus.json says a session is streaming and
-SessionInfo.json says it is a type the plugin displays.
+SessionInfo.json says it is a type the plugin displays, or one whose final
+order it keeps (see final_snapshot()).
 """
 
 from __future__ import annotations
@@ -107,7 +108,10 @@ _DONE_STATUSES = {"finished", "finalised", "ends"}
 
 
 def _parse_utc(ts: Any) -> Optional[datetime]:
-    """F1 stamps carry seven fractional digits and a Z; fromisoformat takes six."""
+    """F1 stamps carry up to seven fractional digits and a Z, and drop trailing
+    zeros ("12:29:54.53Z"). Before Python 3.11, fromisoformat takes exactly
+    three or six, so cut or pad to six. Unpadded, 55 FP1 stamps parsed as None
+    on the Windows checkout's 3.10 (the Pi runs 3.13) and a test failed."""
     if not isinstance(ts, str) or not ts.strip():
         return None
     s = ts.strip().replace("Z", "+00:00")
@@ -116,7 +120,7 @@ def _parse_utc(ts: Any) -> Optional[datetime]:
         i = 0
         while i < len(rest) and rest[i].isdigit():
             i += 1
-        s = "%s.%s%s" % (head, rest[:i][:6], rest[i:])
+        s = "%s.%s%s" % (head, rest[:i][:6].ljust(6, "0"), rest[i:])
     try:
         dt = datetime.fromisoformat(s)
     except ValueError:
@@ -175,41 +179,44 @@ def _race_gap(raw: Any, position: Optional[int]) -> Any:
     return _seconds(v)
 
 
-def _timed_figures(line: Dict[str, Any], part: Optional[int]):
+def _segments(seq: Any) -> Dict[int, Any]:
+    """A per-segment list by index, 0 being Q1. The initial state sends a list;
+    a delta that creates one sends a dict of string indexes (see _merge)."""
+    if isinstance(seq, list):
+        return dict(enumerate(seq))
+    if isinstance(seq, dict):
+        return {_int(k): v for k, v in seq.items() if _int(k) is not None}
+    return {}
+
+
+def _timed_figures(line: Dict[str, Any]):
     """(gap to fastest, gap to the car ahead, best lap) for practice and qualifying.
 
     Practice carries these at the top level -- seen live in FP1. Qualifying is
-    documented to keep one set per segment in Stats / BestLapTimes, indexed by
-    TimingData.SessionPart. That shape has NOT been seen live here yet, so it
-    is read defensively: top-level fields first, then the current segment, then
-    the latest segment that has a time.
+    documented to keep one set per segment in BestLapTimes / Stats, a shape NOT
+    yet seen live here. Where a segment has a time, the driver's last such
+    segment wins over the top level: F1 classifies the top ten on their Q3 lap
+    even when a Q2 lap was quicker, and everyone else on the segment that
+    knocked them out, so that is the lap the final order stands on. Its gaps
+    come from Stats at the same index, else from the top level.
     """
     gap = _seconds(line.get("TimeDiffToFastest"))
     ahead = _seconds(line.get("TimeDiffToPositionAhead"))
     best = _value(line.get("BestLapTime")) or ""
-
-    def pick(seq, key=None):
-        if isinstance(seq, dict):
-            seq = [seq[k] for k in sorted(seq, key=lambda k: _int(k) or 0)]
-        if not isinstance(seq, list):
-            return None
-        order = list(range(len(seq) - 1, -1, -1))
-        if part and 0 < part <= len(seq):
-            order.insert(0, part - 1)
-        for i in order:
-            item = seq[i]
-            if isinstance(item, dict):
-                v = item.get(key) if key else _value(item)
-                if v not in (None, ""):
-                    return v
-        return None
-
-    if gap is None and line.get("Stats") is not None:
-        gap = _seconds(pick(line["Stats"], "TimeDiffToFastest"))
-        ahead = _seconds(pick(line["Stats"], "TimeDiffToPositionAhead"))
-    if not best and line.get("BestLapTimes") is not None:
-        best = pick(line["BestLapTimes"]) or ""
-    return gap, ahead, best
+    laps = _segments(line.get("BestLapTimes"))
+    timed = [i for i, lap in laps.items() if _value(lap) not in (None, "")]
+    if not timed:
+        return gap, ahead, best
+    last = max(timed)
+    stats = _segments(line.get("Stats")).get(last)
+    if isinstance(stats, dict):
+        # Blank is the segment's fastest car -- P1's TimeDiffToFastest is ""
+        # in practice too -- so it stands rather than falling to the top level.
+        if "TimeDiffToFastest" in stats:
+            gap = _seconds(stats["TimeDiffToFastest"])
+        if "TimeDiffToPositionAhead" in stats:
+            ahead = _seconds(stats["TimeDiffToPositionAhead"])
+    return gap, ahead, _value(laps[last])
 
 
 def _merge(dst: Any, src: Any) -> Any:
@@ -239,6 +246,10 @@ def _merge(dst: Any, src: Any) -> Any:
 class SignalRLiveFeed:
     """F1's live timing, reduced to the snapshot LiveRaceFeed.state() returns.
 
+    state() is the live board, for `session_types`. final_snapshot() is the
+    order a `result_types` session finished in, kept after the live board has
+    gone, whether or not that type gets live cards.
+
     The manager reads `replay_at` / `replay_session_key` off whichever feed it
     holds to pick a poll cadence. This one never replays, so both are None.
     """
@@ -247,11 +258,15 @@ class SignalRLiveFeed:
     replay_session_key = None
 
     def __init__(self, logger: Optional[logging.Logger] = None,
-                 session_types=("Race",), freshness_s: int = 300,
+                 session_types=("Race",),
+                 result_types=("Practice", "Qualifying"),
+                 freshness_s: int = 300,
                  http: Optional[requests.Session] = None,
                  now_fn: Optional[Callable[[], datetime]] = None):
         self.log = logger or logging.getLogger("f1_signalr")
         self.session_types = {str(t).lower() for t in (session_types or ("Race",))}
+        # No fallback to the default, unlike session_types: () turns it off.
+        self.result_types = {str(t).lower() for t in (result_types or ())}
         self.freshness_s = freshness_s
         self.http = http or requests.Session()
         self._now = now_fn or (lambda: datetime.now(timezone.utc))
@@ -365,36 +380,63 @@ class SignalRLiveFeed:
                 pass            # the flag has fallen; hold the final order briefly
             else:
                 return None
-            entries = self._entries_locked(timed=stype.lower() != "race")
-            if not entries:
+            return self._snapshot_locked(now)
+
+    def final_snapshot(self) -> Optional[Dict[str, Any]]:
+        """The order a finished `result_types` session ended in, else None.
+
+        The dict state() builds, finished True. The manager keeps its own copy
+        on the ticker until the next session starts, so none of state()'s
+        timing applies: no freshness check, no hold window, no need for the
+        connection to be up. The held state keeps the classification after the
+        thread disconnects, until a new session's state replaces it.
+        session_types plays no part.
+        """
+        now = self._now()
+        with self._lock:
+            info = self._state.get("SessionInfo") or {}
+            if (not info or not self._done_locked()
+                    or str(info.get("Type") or "").lower() not in self.result_types):
                 return None
-            laps = self._state.get("LapCount") or {}
-            track = self._state.get("TrackStatus") or {}
-            meeting = info.get("Meeting") or {}
-            flag = _TRACK_FLAG.get(str(track.get("Status") or ""))
-            return {
-                "source": "f1",
-                "session_key": info.get("Key") or info.get("Path"),
-                "session_name": info.get("Name") or "",
-                "session_type": stype,
-                "meeting_name": meeting.get("Name") or "",
-                "country": (meeting.get("Country") or {}).get("Name") or "",
-                "circuit": (meeting.get("Circuit") or {}).get("ShortName") or "",
-                "lap": _int(laps.get("CurrentLap")),
-                "total_laps": _int(laps.get("TotalLaps")),
-                "flag": flag,
-                "flag_message": track.get("Message") if flag else None,
-                "finished": self._done_locked(),
-                "data_age_s": max(0, int((now - self._last_msg).total_seconds())),
-                "entries": entries,
-            }
+            return self._snapshot_locked(now)
+
+    def _snapshot_locked(self, now: datetime) -> Optional[Dict[str, Any]]:
+        """The snapshot dict for the held state, None if no one is timed. The
+        caller holds the lock and has already decided the session is shown."""
+        info = self._state.get("SessionInfo") or {}
+        stype = str(info.get("Type") or "")
+        entries = self._entries_locked(timed=stype.lower() != "race")
+        if not entries:
+            return None
+        laps = self._state.get("LapCount") or {}
+        track = self._state.get("TrackStatus") or {}
+        meeting = info.get("Meeting") or {}
+        flag = _TRACK_FLAG.get(str(track.get("Status") or ""))
+        return {
+            "source": "f1",
+            "session_key": info.get("Key") or info.get("Path"),
+            "session_name": info.get("Name") or "",
+            "session_type": stype,
+            "meeting_name": meeting.get("Name") or "",
+            "country": (meeting.get("Country") or {}).get("Name") or "",
+            "circuit": (meeting.get("Circuit") or {}).get("ShortName") or "",
+            "lap": _int(laps.get("CurrentLap")),
+            "total_laps": _int(laps.get("TotalLaps")),
+            "flag": flag,
+            "flag_message": track.get("Message") if flag else None,
+            "finished": self._done_locked(),
+            # state() only gets here with a message in hand; final_snapshot()
+            # does not check, so do not assume one.
+            "data_age_s": (max(0, int((now - self._last_msg).total_seconds()))
+                           if self._last_msg is not None else None),
+            "entries": entries,
+        }
 
     def _entries_locked(self, timed: bool) -> List[Dict[str, Any]]:
         timing = self._state.get("TimingData") or {}
         lines = timing.get("Lines") or {}
         drivers = self._state.get("DriverList") or {}
         app = (self._state.get("TimingAppData") or {}).get("Lines") or {}
-        part = _int(timing.get("SessionPart"))
         out = []
         for num, line in (lines.items() if isinstance(lines, dict) else ()):
             if not isinstance(line, dict):
@@ -405,7 +447,7 @@ class SignalRLiveFeed:
             ident = drivers.get(num) if isinstance(drivers.get(num), dict) else {}
             stint = app.get(num) if isinstance(app, dict) and isinstance(app.get(num), dict) else {}
             if timed:
-                gap, interval, best = _timed_figures(line, part)
+                gap, interval, best = _timed_figures(line)
             else:
                 gap = _race_gap(line.get("GapToLeader"), pos)
                 interval = _seconds(line.get("IntervalToPositionAhead"))
@@ -460,12 +502,15 @@ class SignalRLiveFeed:
                 backoff = min(backoff * 2, 120)
 
     def _wanted_session(self) -> Optional[Dict[str, Any]]:
-        """SessionInfo for a streaming session we display, else None."""
+        """SessionInfo for a streaming session we display or keep the result
+        of, else None. final_snapshot() can only hand over what a connection
+        delivered, so a practice is joined even when only races get cards."""
         status = self._static("StreamingStatus.json") or {}
         if status.get("Status") != "Available":
             return None
         info = self._static("SessionInfo.json")
-        if not info or str(info.get("Type") or "").lower() not in self.session_types:
+        wanted = self.session_types | self.result_types
+        if not info or str(info.get("Type") or "").lower() not in wanted:
             return None
         if info.get("Path") and info.get("Path") == self._done_path:
             return None     # still streaming, but we already saw it finish
