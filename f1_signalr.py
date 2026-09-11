@@ -85,6 +85,7 @@ TOPICS = ["SessionInfo", "SessionStatus", "TrackStatus", "LapCount",
           "ExtrapolatedClock", "Heartbeat"]
 
 _IDLE_CHECK_S = 60       # between StreamingStatus checks when nothing is on
+_RECONNECT_S = 15        # after a connection ends, before trying another
 _POLL_GAP_S = 1.0        # between long polls; batches a second of updates
 _POLL_TIMEOUT_S = 120    # the server holds an idle poll open for ~90 s
 _HTTP_TIMEOUT_S = 10
@@ -254,6 +255,9 @@ class SignalRLiveFeed:
         self._last_msg: Optional[datetime] = None
         self._finished_at: Optional[datetime] = None
         self._done_path: Optional[str] = None
+        # True once this connection has delivered its own full state. Until
+        # then, whatever is held is left over from an earlier session.
+        self._have_initial = False
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_error_log = 0.0
@@ -290,6 +294,7 @@ class SignalRLiveFeed:
     def _load_initial(self, result: Dict[str, Any], when: datetime) -> None:
         with self._lock:
             self._state = {k: _merge(None, v) for k, v in result.items()}
+            self._have_initial = True
             self._last_msg = when
             # Joined after the flag: the finish was not seen, so do not dress
             # the final order up as live for another five minutes.
@@ -427,6 +432,10 @@ class SignalRLiveFeed:
                               info.get("Name"), (info.get("Meeting") or {}).get("Name"))
                 self._session_loop()
                 backoff = 5
+                # Never straight back in. A connection that ends at once --
+                # a 204, or the bug described in _begin_connection() -- must
+                # not become a reconnect loop against F1's servers.
+                self._stop.wait(_RECONNECT_S)
             except Exception as exc:  # noqa: BLE001 - any failure means "not live"
                 self._log_error("F1 live timing unavailable: %s", exc)
                 self._stop.wait(backoff)
@@ -456,7 +465,22 @@ class SignalRLiveFeed:
                            data=(json.dumps(obj) + RS).encode("utf-8"))
         r.raise_for_status()
 
+    def _begin_connection(self) -> None:
+        """Mark the held state as not yet this connection's.
+
+        2026-09-11, FP2: FP1's finished state was still held when FP2's stream
+        came up 15 minutes before the session. The first poll of a new
+        connection returns before any data, _finished_for_good() read FP1's
+        two-hour-old finish, and the thread disconnected and reconnected every
+        0.6 s -- about five requests a second -- until the service restarted.
+        The state itself is kept, so a reconnect mid-race does not blank the
+        board; it just cannot end a connection until the new one reports.
+        """
+        with self._lock:
+            self._have_initial = False
+
     def _session_loop(self) -> None:
+        self._begin_connection()
         r = self.http.post(HUB + "/negotiate?negotiateVersion=1", headers=_HEADERS,
                            data=b"", timeout=_HTTP_TIMEOUT_S)
         r.raise_for_status()
@@ -500,6 +524,8 @@ class SignalRLiveFeed:
     def _finished_for_good(self) -> bool:
         """The flag fell long enough ago that the board will not change again."""
         with self._lock:
+            if not self._have_initial:
+                return False    # nothing from this connection yet
             if self._finished_at is None or self._status_locked() not in _DONE_STATUSES:
                 return False
             return (self._now() - self._finished_at).total_seconds() > self.freshness_s + 60

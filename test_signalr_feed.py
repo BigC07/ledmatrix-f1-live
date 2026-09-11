@@ -295,6 +295,75 @@ def test_qualifying_segments():
         check("Q2 gap, not Q1", e[1]["gap_to_leader"] == 0.188, e[1]["gap_to_leader"])
 
 
+# ── the thread, against a fake hub ─────────────────────────────────────
+class FakeResponse:
+    def __init__(self, status=200, body=b"", payload=None):
+        self.status_code = status
+        self.content = body if isinstance(body, bytes) else body.encode("utf-8")
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError("HTTP %d" % self.status_code)
+
+
+class FakeHub:
+    """A session streaming, a practice on, and a hub that accepts then says nothing."""
+
+    def __init__(self, path="2026/next/fp2/", poll_status=200):
+        self.path = path
+        self.poll_status = poll_status
+        self.negotiations = 0
+
+    def get(self, url, **kw):
+        if url.endswith("StreamingStatus.json"):
+            return FakeResponse(body=json.dumps({"Status": "Available"}))
+        if url.endswith("SessionInfo.json"):
+            return FakeResponse(body=json.dumps({"Type": "Practice", "Name": "Practice 2",
+                                                 "Path": self.path}))
+        return FakeResponse(status=self.poll_status)   # a long poll with nothing new
+
+    def post(self, url, **kw):
+        if "negotiate" in url:
+            self.negotiations += 1
+            return FakeResponse(payload={"connectionToken": "tok"})
+        return FakeResponse()
+
+
+def run_thread_for(feed, seconds):
+    import time
+    feed.start()
+    time.sleep(seconds)
+    feed.stop()
+    feed._thread.join(timeout=5)
+
+
+def test_new_session_holds_one_connection():
+    """FP2, 2026-09-11: FP1's finished state was still held when FP2's stream
+    came up, and the thread reconnected every 0.6 s. It must hold one."""
+    hub = FakeHub()
+    feed = SignalRLiveFeed(session_types=("Practice",), http=hub)
+    old = copy.deepcopy(next(m for m in recording() if m.get("type") == 3))
+    old["result"]["SessionStatus"] = {"Status": "Finalised"}
+    feed.feed_message(old, when=datetime.now(timezone.utc) - timedelta(hours=2))
+    run_thread_for(feed, 2.5)
+    check("a new session gets one connection, not a reconnect loop",
+          hub.negotiations == 1, hub.negotiations)
+    check("the old session's finish did not end the new connection",
+          feed._done_path is None, feed._done_path)
+
+
+def test_closed_connection_waits_before_reconnecting():
+    hub = FakeHub(poll_status=204)
+    feed = SignalRLiveFeed(session_types=("Practice",), http=hub)
+    run_thread_for(feed, 2.5)
+    check("a connection the server closes is not retried at once",
+          hub.negotiations == 1, hub.negotiations)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
