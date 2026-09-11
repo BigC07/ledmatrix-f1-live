@@ -5,10 +5,11 @@
   "author": "ChuckBuilds",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
+  "update_interval": 20,
   "repo": "https://github.com/ChuckBuilds/ledmatrix-plugins",
   "branch": "main",
   "plugin_path": "plugins/f1-scoreboard",
-  "description": "Fork of ChuckBuilds f1-scoreboard 1.8.6. Adds live race timing from OpenF1, plus local layout patches (per-driver race rows, configured section order). Forked so the plugin store cannot overwrite it.",
+  "description": "Fork of ChuckBuilds f1-scoreboard 1.8.6. Adds live timing from F1's own feed (OpenF1 for replay), plus local layout patches (per-driver race rows, configured section order). Forked so the plugin store cannot overwrite it.",
   "category": "sports",
   "tags": [
     "f1",

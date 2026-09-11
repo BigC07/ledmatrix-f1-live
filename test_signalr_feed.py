@@ -364,6 +364,18 @@ def test_closed_connection_waits_before_reconnecting():
           hub.negotiations == 1, hub.negotiations)
 
 
+def test_core_calls_update_often_enough():
+    """FP2, 2026-09-11: the live poll lives in update(), and the core calls
+    update() on the manifest's update_interval, else the config's -- 3600 s
+    here. With no manifest key the feed was live and the cards waited up to
+    an hour for someone to ask."""
+    base = PLUGIN if os.path.isdir(PLUGIN) else HERE
+    with open(os.path.join(base, "manifest.json"), encoding="utf-8") as fh:
+        interval = json.load(fh).get("update_interval")
+    check("manifest sets a short update_interval (<= 30 s)",
+          isinstance(interval, (int, float)) and 0 < interval <= 30, interval)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
