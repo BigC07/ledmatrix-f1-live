@@ -8,9 +8,17 @@ Grand Prix being 120 minutes from the published start). Nothing is fetched. So
 during a race the ticker keeps showing the *previous* race, and the only thing
 "live" changes is the update interval and a badge on cards we do not display.
 
-OpenF1 (https://openf1.org, free, no key) carries the actual session feed. The
-upstream plugin already talks to it for practice data, so the dependency is not
-new -- see OPENF1_BASE in f1_data.py.
+OpenF1 (https://openf1.org) carries the actual session feed. The upstream
+plugin already talks to it for practice data, so the dependency is not new --
+see OPENF1_BASE in f1_data.py.
+
+**No longer the live source, as of 2026-09-11.** Tried in Spanish GP FP1,
+OpenF1 answered every unauthenticated request with 401 while the session ran
+-- global access, past sessions included, is restricted to authenticated
+users until the session ends -- so this feed would have shown nothing during a
+race. Live timing now comes from F1's own feed (f1_signalr.py). This module
+stays for replay and fixtures, which OpenF1 still serves between sessions, and
+as `live.source: "openf1"` for anyone with a key.
 
 What "live" means here
 ----------------------
@@ -121,12 +129,17 @@ def _parse(ts: str) -> Optional[datetime]:
 
 def format_gap(gap: Any, position: Optional[int],
                driver_lap: Optional[int] = None,
-               leader_lap: Optional[int] = None) -> Tuple[str, str]:
+               leader_lap: Optional[int] = None,
+               retired: bool = False) -> Tuple[str, str]:
     """(time_str, status) for render_race_row().
 
     Leader -> LEADER. Lapped -> LAPPED. Retired -> RETIRED. Everyone else
     a +seconds gap. Never a gap figure for a car that is no longer racing.
     """
+    # F1's own feed says so outright. The lap-deficit test below is the
+    # inference OpenF1 forced, and stays for that path.
+    if retired:
+        return "RETIRED", "Retired"
     if (leader_lap is not None and driver_lap is not None
             and (leader_lap - driver_lap) >= _RETIRED_LAP_DEFICIT):
         return "RETIRED", "Retired"
@@ -153,13 +166,32 @@ def live_header_title(state: Dict[str, Any], race_name: str = "") -> str:
 
 
 def live_row_from_entry(entry: Dict[str, Any],
-                        leader_lap: Optional[int] = None) -> Dict[str, Any]:
-    """Shape a snapshot entry for F1Renderer.render_race_row()."""
-    time_str, status = format_gap(
-        entry.get("gap_to_leader"),
-        entry.get("position"),
-        entry.get("lap"),
-        leader_lap)
+                        leader_lap: Optional[int] = None,
+                        timed: bool = False) -> Dict[str, Any]:
+    """Shape a snapshot entry for F1Renderer.render_race_row().
+
+    `timed` is practice and qualifying, which run on best laps rather than
+    on track position: P1 shows the time to beat, everyone else how far off
+    it they are. No LEADER, LAPPED or RETIRED there -- a car in the garage
+    for twenty minutes of FP1 is not out of anything, and lap counts differ
+    by design, so the lap-deficit test would mark half the field retired.
+    """
+    if timed:
+        gap = entry.get("gap_to_leader")
+        if entry.get("position") == 1 or gap in (None, ""):
+            time_str = entry.get("best_lap") or ""
+        elif isinstance(gap, (int, float)):
+            time_str = "+%.3f" % float(gap)
+        else:
+            time_str = str(gap)
+        status = "Finished"
+    else:
+        time_str, status = format_gap(
+            entry.get("gap_to_leader"),
+            entry.get("position"),
+            entry.get("lap"),
+            leader_lap,
+            retired=bool(entry.get("retired")))
     grid = entry.get("grid") or 0
     try:
         grid = int(grid)

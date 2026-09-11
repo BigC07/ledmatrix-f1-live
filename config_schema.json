@@ -493,8 +493,35 @@
     "live": {
       "type": "object",
       "title": "Live Race Timing",
-      "description": "OpenF1 live race feed. Replay pins a finished session so the live cards can be tested without a Grand Prix. fixture_dir is only used with replay — leftover fixtures must not freeze the board on a finished race.",
+      "description": "Live timing for the race, and optionally practice and qualifying. The source is F1's own timing feed by default: OpenF1 turns unauthenticated clients away while a session is running (found 2026-09-11). Replay pins a finished OpenF1 session so the live cards can be tested without a Grand Prix. fixture_dir is only used with replay — leftover fixtures must not freeze the board on a finished race.",
       "properties": {
+        "source": {
+          "type": "string",
+          "title": "Live Timing Source",
+          "enum": [
+            "f1",
+            "openf1"
+          ],
+          "default": "f1",
+          "description": "f1: F1's own live timing feed, free. openf1: the OpenF1 API, which now needs a paid key while a session is running. Replay always uses OpenF1."
+        },
+        "session_types": {
+          "type": "array",
+          "title": "Live Sessions",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Race",
+              "Qualifying",
+              "Practice"
+            ]
+          },
+          "uniqueItems": true,
+          "default": [
+            "Race"
+          ],
+          "description": "Which live sessions get live cards. Race covers the Grand Prix and the sprint. Practice and qualifying show the order by best lap: the time to beat, then each driver's gap to it."
+        },
         "poll_interval": {
           "x-advanced": true,
           "type": "integer",
@@ -502,31 +529,42 @@
           "default": 20,
           "minimum": 10,
           "maximum": 120,
-          "description": "Seconds between OpenF1 polls on the plugin update tick. Rendering never waits on HTTP."
+          "description": "Seconds between live snapshots on the plugin update tick. Rendering never waits on HTTP."
         },
         "replay_session_key": {
           "x-advanced": true,
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "title": "Replay Session Key",
           "default": null,
           "description": "OpenF1 session_key to replay (Monza 2026 race is 11361). Null in production."
         },
         "replay_at": {
           "x-advanced": true,
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "title": "Replay At",
           "default": null,
           "description": "ISO timestamp inside the replayed session, e.g. 2026-09-06T14:00:00+00:00."
         },
         "fixture_dir": {
           "x-advanced": true,
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "title": "Fixture Directory",
           "default": null,
           "description": "Directory of OpenF1 JSON dumps used only when replay_session_key is set. Default on this Pi: /home/admin/f1fixtures."
         }
       },
       "x-propertyOrder": [
+        "source",
+        "session_types",
         "poll_interval",
         "replay_session_key",
         "replay_at",

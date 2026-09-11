@@ -19,6 +19,7 @@ from src.plugin_system.base_plugin import BasePlugin, VegasDisplayMode
 
 from f1_data import F1DataSource
 from f1_live import (LiveRaceFeed, live_header_title, live_row_from_entry)
+from f1_signalr import SignalRLiveFeed
 from f1_renderer import F1Renderer
 from logo_downloader import F1LogoLoader
 from scroll_display import ScrollDisplayManager
@@ -154,8 +155,14 @@ class F1ScoreboardPlugin(BasePlugin):
         except (TypeError, ValueError):
             return 20
 
-    def _make_live_feed(self, config: Optional[Dict] = None) -> LiveRaceFeed:
-        """f1-live: live_race -- OpenF1 feed. Replay/fixtures are test-only."""
+    def _make_live_feed(self, config: Optional[Dict] = None):
+        """f1-live: live_race -- F1's own timing feed; OpenF1 for replay.
+
+        OpenF1 turned every unauthenticated client away during live sessions
+        (found in Spanish GP FP1, 2026-09-11), so live timing now comes from
+        f1_signalr. Replay and fixtures are OpenF1-shaped and stay on the old
+        feed, as does `live.source: "openf1"` for anyone with a key.
+        """
         cfg = (config or self.config or {}).get("live") or {}
         if not isinstance(cfg, dict):
             cfg = {}
@@ -170,12 +177,30 @@ class F1ScoreboardPlugin(BasePlugin):
             replay_key = int(replay_key) if replay_key else None
         except (TypeError, ValueError):
             replay_key = None
-        return LiveRaceFeed(
-            logger=self.logger,
-            replay_session_key=replay_key,
-            replay_at=replay_at or None,
-            fixture_dir=fixture_dir or None,
-        )
+        source = str(cfg.get("source") or "f1").lower()
+        if replay_key or source == "openf1":
+            return LiveRaceFeed(
+                logger=self.logger,
+                replay_session_key=replay_key,
+                replay_at=replay_at or None,
+                fixture_dir=fixture_dir or None,
+            )
+        types = cfg.get("session_types") or ["Race"]
+        if not isinstance(types, (list, tuple)):
+            types = ["Race"]
+        feed = SignalRLiveFeed(logger=self.logger, session_types=types)
+        feed.start()
+        return feed
+
+    def _stop_live_feed(self) -> None:
+        """The F1 feed owns a thread; replacing it without this leaks one
+        per config save, each polling F1 for the rest of the weekend."""
+        stop = getattr(getattr(self, "_live_feed", None), "stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:
+                pass
 
     def _resolve_timezone(self, config: Dict, cache_manager, plugin_manager=None) -> str:
         """Resolve timezone: plugin config → global config → system zone → UTC.
@@ -939,9 +964,10 @@ class F1ScoreboardPlugin(BasePlugin):
         cards = self._build_live_race_cards(snap)
         self._vegas_live_race_cards = cards
         self.logger.info(
-            "Live race cards: %s lap=%s flag=%s n=%d",
+            "Live race cards: %s lap=%s flag=%s n=%d session=%s",
             ",".join(e.get("code", "?") for e in (snap.get("entries") or [])[:8]),
-            snap.get("lap"), snap.get("flag"), len(cards))
+            snap.get("lap"), snap.get("flag"), len(cards),
+            snap.get("session_name") or "race")
 
     @staticmethod
     def _live_cards_signature(snap: Optional[Dict]) -> str:
@@ -993,10 +1019,16 @@ class F1ScoreboardPlugin(BasePlugin):
         r = self._scroll_renderer
         # Name only on the title line; lap and flag go to the subtitle so the
         # LIVE chip has somewhere to sit.
-        name = self._live_race_name(snap)
+        # F1's feed names the meeting itself ("Spanish Grand Prix"), which
+        # beats matching it against the schedule: ESPN's copy carries the
+        # sponsor ("Tag Heuer Spanish Grand Prix") and would not fit.
+        name = snap.get("meeting_name") or self._live_race_name(snap)
         title = (name.replace("Grand Prix", "GP").strip().upper() if name
                  else (snap.get("circuit") or snap.get("country") or "RACE").upper())
-        cards = [r.render_live_header(title, snap.get("flag"), snap.get("lap"))]
+        timed = str(snap.get("session_type") or "Race").lower() != "race"
+        cards = [r.render_live_header(
+            title, snap.get("flag"), snap.get("lap"),
+            session_label=snap.get("session_name") if timed else None)]
         top_n = 10
         try:
             top_n = int((self.config.get("recent_races") or {}).get(
@@ -1016,7 +1048,7 @@ class F1ScoreboardPlugin(BasePlugin):
         leader_lap = snap.get("lap")
         for entry in shown:
             cards.append(r.render_race_row(
-                live_row_from_entry(entry, leader_lap), live=True))
+                live_row_from_entry(entry, leader_lap, timed=timed), live=True))
         return cards
 
     # ─── Vegas Mode ────────────────────────────────────────────────────
@@ -1275,6 +1307,7 @@ class F1ScoreboardPlugin(BasePlugin):
             global_config=getattr(self, 'global_config', {}) or {})
         self.enable_scrolling = self._scroll_manager is not None
         self._scroll_content_sig = None
+        self._stop_live_feed()
         self._live_feed = self._make_live_feed(new_config)
         self._live_feed_interval = self._live_poll_interval(new_config)
         self._last_live_feed = 0.0
@@ -1287,6 +1320,7 @@ class F1ScoreboardPlugin(BasePlugin):
 
     def cleanup(self):
         """Clean up resources."""
+        self._stop_live_feed()
         try:
             self.logo_loader.clear_cache()
             self.logger.info("F1 Live cleanup completed")

@@ -956,7 +956,8 @@ class F1Renderer:
             F1_RED, (40, 0, 0))
 
     def render_live_header(self, title: str, flag: Optional[str] = None,
-                           lap: Optional[int] = None) -> Image.Image:
+                           lap: Optional[int] = None,
+                           session_label: Optional[str] = None) -> Image.Image:
         """f1-live: live_race header. Same furniture as the finished-race
         name card; the flag chip (SC / VSC / RED) rides in the title and
         recolours the bar so it reads at a glance on a 32 px strip.
@@ -979,6 +980,10 @@ class F1Renderer:
         sub_bits = []
         if lap:
             sub_bits.append("LAP %s" % lap)
+        elif session_label:
+            # Practice and qualifying have no lap counter, and the title is
+            # the Grand Prix -- this is what says which session is on.
+            sub_bits.append(session_label.upper())
         if status:
             sub_bits.append(status)
         subtitle = "  ".join(sub_bits)
@@ -1130,7 +1135,13 @@ class F1Renderer:
             line2, line2_fill = status.upper()[:9], (220, 140, 60)
         else:
             line2 = entry.get("time", "") or ""
-            if line2 and "." in line2 and not line2.startswith("+"):
+            # Trim a race duration ("1:23:45.678" -> "1:23:45"), never a
+            # lap time. A practice or qualifying row's "1:34.077" IS the
+            # figure, and cut to "1:34" the whole top ten reads alike --
+            # the regression the qualifying rows once had. Two colons is a
+            # duration; one is a lap.
+            if (line2 and "." in line2 and not line2.startswith("+")
+                    and line2.count(":") >= 2):
                 line2 = line2.rsplit(".", 1)[0]
             line2_fill = (210, 210, 210)
         if line2:
