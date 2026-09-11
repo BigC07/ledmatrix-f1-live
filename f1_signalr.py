@@ -95,8 +95,13 @@ _HTTP_TIMEOUT_S = 10
 # and "7" (VSC ending) clears the chip the way "VSC ENDING" does there.
 _TRACK_FLAG = {"4": "SC", "5": "RED", "6": "VSC"}
 
-# SessionStatus.Status. "Aborted" is a red-flag suspension -- still this
-# session, and exactly when someone looking at the wall wants the board.
+# SessionStatus carries two fields: "Status", the moment-to-moment state, and
+# "Started", the session's phase. Seen live: FP1 ran as Started/Started and
+# ended Finished/Finished. After a red flag in FP2 it read Status "Inactive",
+# Started "Started" with 18 minutes still to run -- and the board went dark,
+# because only Status was read. So a session is running while either field
+# says so, and over when either says it is. "Aborted" is a red-flag
+# suspension: still this session, and exactly when the wall wants the board.
 _LIVE_STATUSES = {"started", "aborted"}
 _DONE_STATUSES = {"finished", "finalised", "ends"}
 
@@ -299,7 +304,7 @@ class SignalRLiveFeed:
             # Joined after the flag: the finish was not seen, so do not dress
             # the final order up as live for another five minutes.
             self._finished_at = (when - timedelta(seconds=self.freshness_s + 1)
-                                 if self._status_locked() in _DONE_STATUSES else None)
+                                 if self._done_locked() else None)
 
     def _apply(self, topic: str, delta: Any, when: datetime) -> None:
         with self._lock:
@@ -315,7 +320,7 @@ class SignalRLiveFeed:
             if self._last_msg is None or when > self._last_msg:
                 self._last_msg = when
             if topic == "SessionStatus":
-                if self._status_locked() in _DONE_STATUSES:
+                if self._done_locked():
                     if self._finished_at is None:
                         self._finished_at = when
                 else:
@@ -323,6 +328,20 @@ class SignalRLiveFeed:
 
     def _status_locked(self) -> str:
         return str((self._state.get("SessionStatus") or {}).get("Status") or "").lower()
+
+    def _done_locked(self) -> bool:
+        """Is the session over? Either SessionStatus field can say so."""
+        ss = self._state.get("SessionStatus") or {}
+        return any(str(ss.get(k) or "").lower() in _DONE_STATUSES
+                   for k in ("Status", "Started"))
+
+    def _running_locked(self) -> bool:
+        """Is the session under way, suspensions included? See _LIVE_STATUSES."""
+        if self._done_locked():
+            return False
+        ss = self._state.get("SessionStatus") or {}
+        return (str(ss.get("Status") or "").lower() in _LIVE_STATUSES
+                or str(ss.get("Started") or "").lower() == "started")
 
     # ── the snapshot ────────────────────────────────────────────────────
     def state(self) -> Optional[Dict[str, Any]]:
@@ -339,10 +358,9 @@ class SignalRLiveFeed:
             if (self._last_msg is None
                     or (now - self._last_msg).total_seconds() > self.freshness_s):
                 return None     # the connection has gone quiet
-            status = self._status_locked()
-            if status in _LIVE_STATUSES:
+            if self._running_locked():
                 pass
-            elif (status in _DONE_STATUSES and self._finished_at is not None
+            elif (self._done_locked() and self._finished_at is not None
                   and (now - self._finished_at).total_seconds() <= self.freshness_s):
                 pass            # the flag has fallen; hold the final order briefly
             else:
@@ -366,7 +384,7 @@ class SignalRLiveFeed:
                 "total_laps": _int(laps.get("TotalLaps")),
                 "flag": flag,
                 "flag_message": track.get("Message") if flag else None,
-                "finished": status in _DONE_STATUSES,
+                "finished": self._done_locked(),
                 "data_age_s": max(0, int((now - self._last_msg).total_seconds())),
                 "entries": entries,
             }
@@ -526,7 +544,7 @@ class SignalRLiveFeed:
         with self._lock:
             if not self._have_initial:
                 return False    # nothing from this connection yet
-            if self._finished_at is None or self._status_locked() not in _DONE_STATUSES:
+            if self._finished_at is None or not self._done_locked():
                 return False
             return (self._now() - self._finished_at).total_seconds() > self.freshness_s + 60
 

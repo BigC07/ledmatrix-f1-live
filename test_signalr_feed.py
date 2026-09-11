@@ -364,6 +364,29 @@ def test_closed_connection_waits_before_reconnecting():
           hub.negotiations == 1, hub.negotiations)
 
 
+def test_session_status_two_fields():
+    """FP2, 2026-09-11: after a red flag the session carried on as Status
+    "Inactive", Started "Started", and reading only Status took the board down
+    with 18 minutes to run. Either field says running; either says over."""
+    cases = [
+        ({"Status": "Inactive", "Started": "Started"}, True, "after a red flag, still Started"),
+        ({"Status": "Aborted", "Started": "Started"}, True, "red-flag suspension"),
+        ({"Status": "Inactive"}, False, "before the start"),
+        ({"Status": "Inactive", "Started": "Inactive"}, False, "before the start, both fields"),
+    ]
+    for status, live, label in cases:
+        feed = race_feed()
+        feed_delta(feed, "SessionStatus", status, T0 + timedelta(seconds=2))
+        check("%s -> %s" % (label, "live" if live else "not live"),
+              (feed.state() is not None) == live, json.dumps(status))
+    feed = race_feed()
+    feed_delta(feed, "SessionStatus", {"Status": "Finished", "Started": "Finished"},
+               T0 + timedelta(seconds=2))
+    snap = feed.state()
+    check("chequered flag in both fields -> held as finished",
+          snap is not None and snap["finished"])
+
+
 def test_core_calls_update_often_enough():
     """FP2, 2026-09-11: the live poll lives in update(), and the core calls
     update() on the manifest's update_interval, else the config's -- 3600 s
