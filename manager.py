@@ -9,6 +9,7 @@ practice, sprint results, upcoming races, and race calendar.
 import hashlib
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -118,6 +119,10 @@ class F1ScoreboardPlugin(BasePlugin):
         self._vegas_live_race_cards: List[Image.Image] = []
         self._live_snapshot: Optional[Dict] = None
         self._live_cards_sig: Optional[str] = None
+        # f1-live: Vegas alert -- (alert_id, card, created), offered when a red
+        # flag, SC or VSC comes out; see get_vegas_alert().
+        self._vegas_alert: Optional[tuple] = None
+        self._alert_flag: Optional[str] = None
         # f1-live: last_session -- the final order of the last finished practice
         # or qualifying, from F1's feed, kept until the next session goes live.
         # Persisted, so a restart between sessions does not lose it.
@@ -400,6 +405,10 @@ class F1ScoreboardPlugin(BasePlugin):
                         "LIVE session detected: %s", self._live_session)
             except Exception as e:
                 self.logger.warning("Live check error: %s", e, exc_info=True)
+
+        # f1-live: a hand-made alert, to prove the Vegas alert path end to
+        # end outside a live session (see get_vegas_alert).
+        self._maybe_test_alert()
 
         # f1-live: live_race -- poll on the update worker, never on the
         # render path. HTTP in get_vegas_content has frozen the panel.
@@ -1100,9 +1109,11 @@ class F1ScoreboardPlugin(BasePlugin):
             if self._vegas_live_race_cards:
                 self.logger.info("Live race ended; reverting to normal cards")
             self._vegas_live_race_cards = []
+            self._alert_flag = None
             return
         cards = self._build_live_race_cards(snap)
         self._vegas_live_race_cards = cards
+        self._offer_flag_alert(snap, cards)
         self.logger.info(
             "Live race cards: %s lap=%s flag=%s n=%d session=%s",
             ",".join(e.get("code", "?") for e in (snap.get("entries") or [])[:8]),
@@ -1150,6 +1161,61 @@ class F1ScoreboardPlugin(BasePlugin):
             if country and country in blob:
                 return name
         return ""
+
+    # --- Vegas alert (f1-live) ------------------------------------------
+    #
+    # The scroll takes each plugin's cards only on its turn in the rotation, so
+    # a flag could take minutes to reach the wall. With the core patch
+    # patches/patch_core_vegas_alert.py the render pipeline polls
+    # get_vegas_alert() about once a second and splices a new alert's card into
+    # the strip just ahead of the screen. Asked for on 2026-09-12. Without the
+    # core patch nothing calls it, and this only keeps a card and logs a line.
+
+    _ALERT_FLAGS = ("RED", "SC", "VSC")
+    _ALERT_TTL_S = 60
+    # Create this file (any user in the ledmatrix group can) to have one test
+    # alert offered on the next update; it is removed when used. In the cache
+    # dir because the service's /tmp may be private to it.
+    _ALERT_TEST_FILE = "/var/cache/ledmatrix/f1-live-alert-test"
+
+    def get_vegas_alert(self):
+        """(alert_id, card) while an alert is fresh, else None. Called on the
+        render thread, so it only hands over a card built on the update tick."""
+        alert = self._vegas_alert
+        if not alert or time.time() - alert[2] > self._ALERT_TTL_S:
+            return None
+        return alert[0], alert[1]
+
+    def _offer_alert(self, alert_id: str, card: Image.Image) -> None:
+        self._vegas_alert = (alert_id, card.convert("RGB"), time.time())
+        self.logger.info("Vegas alert offered: %s", alert_id)
+
+    def _offer_flag_alert(self, snap: Dict, cards: List[Image.Image]) -> None:
+        """A red flag, safety car or VSC has just come out: offer the new header
+        card as an alert. Once per change of flag, not once per rebuild."""
+        flag = str(snap.get("flag") or "").upper() or None
+        if flag == self._alert_flag:
+            return
+        self._alert_flag = flag
+        if flag in self._ALERT_FLAGS and cards:
+            # Milliseconds, so a flag that ends and comes straight back is a
+            # new alert rather than a repeat the core would skip.
+            self._offer_alert("%s:%s:%.3f" % (snap.get("session_key") or "live", flag,
+                                              time.time()), cards[0])
+
+    def _maybe_test_alert(self) -> None:
+        try:
+            if not os.path.exists(self._ALERT_TEST_FILE):
+                return
+            os.remove(self._ALERT_TEST_FILE)
+        except OSError:
+            return
+        try:
+            card = self._scroll_renderer.render_live_header(
+                "ALERT TEST", "RED", session_label="F1 LIVE")
+            self._offer_alert("test:%.3f" % time.time(), card)
+        except Exception as e:
+            self.logger.warning("Test alert failed: %s", e)
 
     def _build_live_race_cards(self, snap: Dict) -> List[Image.Image]:
         """Header + one row per driver, same layout as the finished-race grid.
