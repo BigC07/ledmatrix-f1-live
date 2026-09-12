@@ -496,6 +496,91 @@ def test_core_calls_update_often_enough():
           isinstance(interval, (int, float)) and 0 < interval <= 30, interval)
 
 
+def quali_feed(part=1, status=None, stype="Qualifying"):
+    """A qualifying session in F1's shape, at the given segment."""
+    result = {
+        "SessionInfo": {"Type": stype, "Name": stype, "Path": "2026/spain/q/",
+                        "Meeting": {"Name": "Spanish Grand Prix"}},
+        "SessionStatus": status or {"Status": "Started", "Started": "Started"},
+        "Heartbeat": {"Utc": T0.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")},
+        "DriverList": {"1": {"Tla": "NOR"}, "12": {"Tla": "ANT"}},
+        "TimingData": {"SessionPart": part, "NoEntries": [22, 16, 10], "Lines": {
+            "1": {"Position": "1", "BestLapTimes": [{"Value": "1:32.100"}],
+                  "Stats": [{"TimeDiffToFastest": ""}]},
+            "12": {"Position": "2", "BestLapTimes": [{"Value": "1:32.300"}],
+                   "Stats": [{"TimeDiffToFastest": "+0.200"}]}}},
+    }
+    clock = Clock(T0 + timedelta(seconds=5))
+    feed = SignalRLiveFeed(session_types=("Qualifying",), http=BoomHTTP(), now_fn=clock)
+    feed.feed_message({"type": 3, "invocationId": "0", "result": result})
+    return feed, clock
+
+
+def test_qualifying_segment_ends_are_not_the_end():
+    """Qualifying, 2026-09-12: F1 ended Q1 with Finished, exactly as it ends the
+    session, and the feed stored Q1's order as the result and went dark for Q2
+    and Q3. The gaps below are that session's (SessionData.StatusSeries)."""
+    feed, clock = quali_feed(part=1)
+    at = [T0 + timedelta(seconds=10)]
+
+    def step(topic, delta, seconds):
+        at[0] += timedelta(seconds=seconds)
+        clock.t = at[0] + timedelta(seconds=2)
+        feed_delta(feed, topic, delta, at[0])
+
+    def finished(snap):
+        return bool(snap and snap.get("finished"))
+
+    check("Q1 running -> live", feed.state() is not None)
+    step("SessionStatus", {"Status": "Finished", "Started": "Finished"}, 1070)   # 14:18
+    snap = feed.state()
+    check("the Q1 flag, both fields Finished -> the board stays up, not finished",
+          snap is not None and not finished(snap), snap and snap.get("finished"))
+    check("and no result is stored off Q1", feed.final_snapshot() is None)
+    step("Heartbeat", {"Utc": "x"}, 330)            # past the old five-minute hold
+    check("5.5 min into the break -> still live", feed.state() is not None)
+    check("and the thread is not done for good", not feed._finished_for_good())
+    step("TimingData", {"SessionPart": 2}, 29)      # 14:23:59
+    step("SessionStatus", {"Status": "Inactive"}, 9)
+    check("Inactive before Q2 -> still live", feed.state() is not None)
+    step("SessionStatus", {"Status": "Started", "Started": "Started"}, 52)
+    check("Q2 running -> live", feed.state() is not None)
+    step("SessionStatus", {"Status": "Finished", "Started": "Finished"}, 900)    # 14:40
+    check("the Q2 flag -> still live, still no result",
+          feed.state() is not None and not finished(feed.state())
+          and feed.final_snapshot() is None)
+    step("TimingData", {"SessionPart": 3}, 360)     # 14:46:00
+    step("SessionStatus", {"Status": "Inactive"}, 17)
+    step("SessionStatus", {"Status": "Started", "Started": "Started"}, 43)
+    check("Q3 running -> live", feed.state() is not None and not finished(feed.state()))
+    step("SessionStatus", {"Status": "Finished", "Started": "Finished"}, 780)    # 15:00
+    check("the Q3 flag -> held as finished", finished(feed.state()))
+    final = feed.final_snapshot()
+    check("and the final order is kept as the result",
+          bool(final) and [e["code"] for e in final["entries"]] == ["NOR", "ANT"], final)
+    step("SessionStatus", {"Status": "Finalised"}, 255)
+    check("Finalised -> still over", feed.final_snapshot() is not None)
+
+
+def test_qualifying_edges():
+    feed, _ = quali_feed(part=1, status={"Status": "Inactive", "Started": "Inactive"})
+    check("before Q1 (segment 1, Inactive) -> not live", feed.state() is None)
+    feed, _ = quali_feed(part=1, status={"Status": "Finished", "Started": "Finished"})
+    snap = feed.state()
+    check("joined in the Q1-Q2 break -> live, not finished",
+          snap is not None and not snap.get("finished"), snap and snap.get("finished"))
+    check("and no result off Q1", feed.final_snapshot() is None)
+    feed, _ = quali_feed(part=2, status={"Status": "Inactive"})
+    check("joined just before Q2 (segment 2, Inactive) -> live", feed.state() is not None)
+    feed, _ = quali_feed(part=3, status={"Status": "Finished", "Started": "Finished"})
+    check("joined after Q3 -> the result is there", feed.final_snapshot() is not None)
+    feed, _ = quali_feed(part=1, status={"Status": "Ends", "Started": "Finished"})
+    check("Ends is the end whatever the segment", feed.final_snapshot() is not None)
+    feed, _ = quali_feed(part=1, status={"Status": "Finished", "Started": "Finished"},
+                         stype="Practice")
+    check("practice has no segments: Finished is the end", feed.final_snapshot() is not None)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

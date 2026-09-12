@@ -105,6 +105,17 @@ _TRACK_FLAG = {"4": "SC", "5": "RED", "6": "VSC"}
 # suspension: still this session, and exactly when the wall wants the board.
 _LIVE_STATUSES = {"started", "aborted"}
 _DONE_STATUSES = {"finished", "finalised", "ends"}
+# Qualifying runs in segments (Q1-Q3; the sprint shootout SQ1-SQ3), and F1 ends
+# each one the way it ends the session. SessionData for 2026-09-12 qualifying:
+# Started 14:00Z, Finished 14:18, Inactive 14:24, Started 14:25, Finished 14:40,
+# Inactive 14:46, Started 14:47, Finished 15:00, Finalised 15:04, Ends 15:21,
+# QualifyingPart 1/2/3. The other field was not "Started" in the breaks either
+# (the board would have held if it had). Taking the Q1 "Finished" for the end
+# stored Q1's order as the result and took the board down for Q2 and Q3; only
+# the segment number (TimingData.SessionPart) tells the two apart. Finalised
+# and Ends come only once the whole session is over.
+_FINAL_STATUSES = {"finalised", "ends"}
+_QUALI_SEGMENTS = 3
 
 
 def _parse_utc(ts: Any) -> Optional[datetime]:
@@ -344,19 +355,51 @@ class SignalRLiveFeed:
     def _status_locked(self) -> str:
         return str((self._state.get("SessionStatus") or {}).get("Status") or "").lower()
 
+    def _segment_locked(self) -> int:
+        timing = self._state.get("TimingData") or {}
+        try:
+            return int(timing.get("SessionPart") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _segments_to_come_locked(self) -> bool:
+        """Qualifying before its last segment, when a Finished ends only the
+        segment. See _FINAL_STATUSES."""
+        info = self._state.get("SessionInfo") or {}
+        if str(info.get("Type") or "").lower() != "qualifying":
+            return False
+        entries = (self._state.get("TimingData") or {}).get("NoEntries")
+        last = (len(entries) if isinstance(entries, (list, dict)) and len(entries) >= 2
+                else _QUALI_SEGMENTS)
+        return 0 < self._segment_locked() < last
+
     def _done_locked(self) -> bool:
-        """Is the session over? Either SessionStatus field can say so."""
+        """Is the session over? Either SessionStatus field can say so -- except
+        a Finished in qualifying before the last segment, which ends only that
+        segment (see _FINAL_STATUSES)."""
         ss = self._state.get("SessionStatus") or {}
-        return any(str(ss.get(k) or "").lower() in _DONE_STATUSES
-                   for k in ("Status", "Started"))
+        fields = [str(ss.get(k) or "").lower() for k in ("Status", "Started")]
+        if any(f in _FINAL_STATUSES for f in fields):
+            return True
+        if not any(f in _DONE_STATUSES for f in fields):
+            return False
+        return not self._segments_to_come_locked()
 
     def _running_locked(self) -> bool:
-        """Is the session under way, suspensions included? See _LIVE_STATUSES."""
+        """Is the session under way, suspensions and the breaks between
+        qualifying segments included? See _LIVE_STATUSES and _FINAL_STATUSES."""
         if self._done_locked():
             return False
         ss = self._state.get("SessionStatus") or {}
-        return (str(ss.get("Status") or "").lower() in _LIVE_STATUSES
-                or str(ss.get("Started") or "").lower() == "started")
+        status = str(ss.get("Status") or "").lower()
+        if status in _LIVE_STATUSES or str(ss.get("Started") or "").lower() == "started":
+            return True
+        if not self._segments_to_come_locked():
+            return False
+        # Between segments: Finished as one ends, then Inactive until the next
+        # starts. Still the same session, so the board stays up. Before Q1 it
+        # is Inactive too, but the segment is still 1 then.
+        return status in _DONE_STATUSES or self._segment_locked() >= 2
 
     # ── the snapshot ────────────────────────────────────────────────────
     def state(self) -> Optional[Dict[str, Any]]:
