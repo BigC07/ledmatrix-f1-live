@@ -28,8 +28,9 @@ logger = logging.getLogger(__name__)
 #     flood the tile away from its edge so the shield / H circle stands alone
 #   - then harden: sharpen as it shows over black, lift saturation a touch, and
 #     drop the faint half-transparent fringe instead of drawing it dim
-#   - cadillac: left exactly as it was -- a thin-lettered placeholder that the
-#     hardening breaks up (and the user does not like it anyway)
+#   - cadillac: pixel art drawn for the panel at the row's 20 px -- the colour
+#     crest the user picked (tools/f1_cadillac_logo.py, 2026-09-12) in place of
+#     a thin "CAD" placeholder -- so cropping or hardening would only damage it
 _KEEP_ONLY = {"sauber": lambda r, g, b: g > 120 and r < 120 and b < 120}
 _TILE_SEEDS = {"ferrari": ((2, 48), (93, 48)), "haas": ((14, 48), (81, 48))}
 _NO_HARDEN = {"cadillac"}

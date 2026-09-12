@@ -2,8 +2,11 @@
 """Offline checks for the F1 team logos as the panel draws them (f1-live).
 
 The clean-up asked for on 2026-09-12: margins cropped, the Sauber art reduced to
-its green K, the white tiles behind Ferrari and Haas removed, edges hardened, and
-Cadillac left as it was. Uses the bundled PNGs, so run it on the Pi:
+its green K, the white tiles behind Ferrari and Haas removed, edges hardened --
+and Cadillac, a thin "CAD" placeholder the user did not like, replaced by the
+colour crest they picked, drawn one pixel at a time for the row
+(tools/f1_cadillac_logo.py) and passed through untouched. Uses the bundled
+PNGs, so run it on the Pi:
 
     cd /home/admin/LEDMatrix && python3 plugin-repos/f1-live/test_logos.py
 """
@@ -34,7 +37,8 @@ def check(name, cond, detail=""):
 
 
 L = LD.F1LogoLoader(PLUGIN)
-SIZE = 24          # about the result row's logo slot on a 32 px panel
+SIZE = 24          # a slot a little larger than the row's
+ROW = 20           # what the 128x32 result row asks the loader for (measured 2026-09-12)
 
 
 def logo(cid):
@@ -101,8 +105,21 @@ def test_wide_marks_get_bigger():
               (ink(plain(cid)), ink(logo(cid))))
 
 
-def test_cadillac_is_left_as_it_was():
-    check("cadillac: unchanged", logo("cadillac").tobytes() == plain("cadillac").tobytes())
+def test_cadillac_is_the_pixel_crest_untouched():
+    """The colour crest the user picked on 2026-09-12, drawn at the row's size;
+    the loader must hand it over exactly as drawn."""
+    art = Image.open(L.teams_dir / "cadillac.png").convert("RGBA")
+    check("cadillac.png is drawn at the row size, %dx%d" % (ROW, ROW), art.size == (ROW, ROW),
+          art.size)
+    check("and reaches the row pixel for pixel",
+          L._load_logo("cadillac", ROW, ROW).tobytes() == art.tobytes())
+    check("and through the name the row actually uses",
+          L.get_team_logo("Cadillac", ROW, ROW).tobytes() == art.tobytes())
+    colours = {p[:3] for p in art.getdata() if p[3]}
+    for name, rgb in (("red", (215, 25, 35)), ("blue", (40, 80, 220)), ("gold", (235, 180, 30))):
+        check("the crest has its %s quarter" % name, rgb in colours)
+    check("cadillac in a larger slot is not stretched", logo("cadillac").size == (ROW, ROW),
+          logo("cadillac").size)
 
 
 if __name__ == "__main__":
