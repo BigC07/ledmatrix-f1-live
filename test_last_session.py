@@ -15,6 +15,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 
 CORE = "/home/admin/LEDMatrix"
 PLUGIN = os.environ.get("F1_LIVE_PLUGIN", CORE + "/plugin-repos/f1-live")
@@ -86,6 +87,8 @@ def plugin(final=None, result_sessions=("Practice", "Qualifying"), cache=None):
     p._last_session_dropped = None
     p._vegas_last_session_cards = []
     p._vegas_live_race_cards = []
+    p._qualifying = None
+    p._upcoming_race = None
     # One marker per card, so the marquee order can be read back.
     p._build_session_result_cards = lambda s: ["result:%s" % e["code"] for e in s["entries"]]
     p._vegas_section_images = lambda section: ["section:%s" % section]
@@ -214,6 +217,37 @@ def test_real_cards_match_the_q3_cards_pixel_for_pixel():
         e["last_name"] = "Driver" + e["code"]
         e["constructor_id"] = "Mercedes"
     check("a qualifying result builds too", len(p._build_session_result_cards(qs)) == 11)
+
+
+def weekend(first_utc):
+    fmt = "%Y-%m-%dT%H:%MZ"
+    return {"name": "Next Grand Prix",
+            "sessions": [{"type_abbr": "FP1", "date": first_utc.strftime(fmt), "status_state": "post"},
+                         {"type_abbr": "Race", "date": (first_utc + timedelta(days=2)).strftime(fmt),
+                          "status_state": "pre"}]}
+
+
+def test_last_weekends_qualifying_goes_when_practice_starts():
+    """Asked for 2026-09-11: once a new Grand Prix weekend is under way, the
+    previous weekend's qualifying is off the ticker. Monza's Q3 cards were still
+    scrolling on the Friday of the Spanish GP."""
+    now = datetime.now(timezone.utc)
+    p = plugin()
+    p._qualifying = {"race_name": "Italian Grand Prix",
+                     "date": (now - timedelta(days=5)).strftime("%Y-%m-%d")}
+    p._upcoming_race = weekend(now + timedelta(hours=3))
+    check("before the next weekend starts, last weekend's qualifying stays",
+          "section:qualifying" in p.get_vegas_content())
+    p._upcoming_race = weekend(now - timedelta(hours=3))
+    images = p.get_vegas_content()
+    check("once its first session has started, it goes", "section:qualifying" not in images, images)
+    check("and the last race stays", "section:last_race" in images, images)
+    p._qualifying = {"race_name": "Spanish Grand Prix",
+                     "date": (now + timedelta(days=2)).strftime("%Y-%m-%d")}
+    check("this weekend's qualifying, once published, is shown",
+          "section:qualifying" in p.get_vegas_content())
+    p._upcoming_race, p._qualifying = None, {"date": "2026-09-06"}
+    check("with no schedule, nothing is hidden", "section:qualifying" in p.get_vegas_content())
 
 
 if __name__ == "__main__":

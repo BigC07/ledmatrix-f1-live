@@ -1293,6 +1293,45 @@ class F1ScoreboardPlugin(BasePlugin):
                     self._scroll_manager.get_vegas_items_for_mode(mode_key))
         return images
 
+    def _qualifying_is_stale(self, now: Optional[datetime] = None) -> bool:
+        """Last weekend's qualifying, now that the next weekend has started.
+
+        Asked for on 2026-09-11: once practice starts for a new Grand Prix, the
+        previous one's qualifying should not be on the ticker. Jolpica publishes
+        the new qualifying only on Saturday, so from FP1 until then this section
+        showed last weekend's -- Monza's Q3 cards on the Friday of the Spanish
+        GP. Compared on dates, because the qualifying (Jolpica) and the schedule
+        (ESPN) share no round numbers: stale when its Grand Prix is dated before
+        the upcoming weekend's first session, and that session has started. The
+        schedule keeps sessions that have happened (status "post"), so FP1 is
+        still in the list once it is under way.
+        """
+        quali = self._qualifying or {}
+        race = self._upcoming_race or {}
+        try:
+            quali_day = datetime.strptime(str(quali.get("date") or "")[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return False
+        starts = []
+        for s in race.get("sessions") or []:
+            try:
+                ts = datetime.fromisoformat(str(s.get("date") or "").replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            starts.append(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc))
+        if not starts:
+            return False
+        first = min(starts)
+        stale = first <= (now or datetime.now(timezone.utc)) and quali_day < first.date()
+        # Say so once per change, not on every marquee rebuild.
+        note = (quali.get("race_name"), race.get("name")) if stale else None
+        if note != getattr(self, "_stale_quali_note", None):
+            self._stale_quali_note = note
+            if stale:
+                self.logger.info("Hiding the %s qualifying: the %s weekend has started",
+                                 quali.get("race_name") or "previous", race.get("name") or "next")
+        return stale
+
     def get_vegas_content(self) -> Optional[List[Image.Image]]:
         """Return rendered cards for the configured marquee sections."""
         # Local patch (repo patches/patch_f1_race_rows.py): emit in the order
@@ -1322,6 +1361,9 @@ class F1ScoreboardPlugin(BasePlugin):
             emitted.append("last_session")
             if str((self._last_session or {}).get("session_type") or "").lower() == "qualifying":
                 seen.add("qualifying")
+        # f1-live: last weekend's qualifying goes once the next weekend starts.
+        if self._qualifying_is_stale():
+            seen.add("qualifying")
         for section in self._vegas_sections():
             if section in seen:
                 continue
