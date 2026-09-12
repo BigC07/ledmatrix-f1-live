@@ -10,11 +10,64 @@ import logging
 import os
 from pathlib import Path
 from typing import Dict, Optional, Tuple
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 from team_colors import get_team_color, normalize_constructor_id
 
 logger = logging.getLogger(__name__)
+
+# f1-live: team logos cleaned up for a 1:1 LED panel (asked for 2026-09-12 with
+# a photo: the green Sauber K read, the wordmark under it was mush). Chosen from
+# LED-dot mock-ups; each rule is keyed on the PNG's file name, from the bundled
+# 96x96 art:
+#   - every logo: crop the transparent margin before shrinking, so the mark
+#     fills its slot (Aston Martin's is 80x18 of the 96: a few px tall uncropped)
+#   - sauber, which the 2026 Audi team also resolves to: only the green K; the
+#     SAUBER wordmark and the thin ring round it are illegible at 24 px
+#   - ferrari, haas: drawn on their own white tile, a white block on the panel;
+#     flood the tile away from its edge so the shield / H circle stands alone
+#   - then harden: sharpen as it shows over black, lift saturation a touch, and
+#     drop the faint half-transparent fringe instead of drawing it dim
+#   - cadillac: left exactly as it was -- a thin-lettered placeholder that the
+#     hardening breaks up (and the user does not like it anyway)
+_KEEP_ONLY = {"sauber": lambda r, g, b: g > 120 and r < 120 and b < 120}
+_TILE_SEEDS = {"ferrari": ((2, 48), (93, 48)), "haas": ((14, 48), (81, 48))}
+_NO_HARDEN = {"cadillac"}
+
+
+def _harden(img: Image.Image) -> Image.Image:
+    """Sharpen, saturate a touch, and make every pixel fully on or off."""
+    r, g, b, a = img.convert("RGBA").split()
+    comp = Image.composite(Image.merge("RGB", (r, g, b)), Image.new("RGB", img.size), a)
+    comp = comp.filter(ImageFilter.UnsharpMask(radius=0.8, percent=130, threshold=1))
+    comp = ImageEnhance.Color(comp).enhance(1.2)
+    a = a.point(lambda v: 255 if v >= 100 else 0)
+    return Image.merge("RGBA", (*comp.split(), a))
+
+
+def _prepare_logo(path: Path, max_width: int, max_height: int) -> Image.Image:
+    """Open a team logo and fit it to max_width x max_height for the panel."""
+    img = Image.open(path).convert("RGBA")
+    stem = path.stem
+    if stem in _NO_HARDEN:
+        img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+        return img
+    for x, y in _TILE_SEEDS.get(stem, ()):
+        if 0 <= x < img.width and 0 <= y < img.height and img.getpixel((x, y))[3]:
+            ImageDraw.floodfill(img, (x, y), (0, 0, 0, 0), thresh=100)
+    keep = _KEEP_ONLY.get(stem)
+    if keep:
+        px = img.load()
+        for y in range(img.height):
+            for x in range(img.width):
+                r, g, b, a = px[x, y]
+                if a and not keep(r, g, b):
+                    px[x, y] = (0, 0, 0, 0)
+    bbox = img.getchannel("A").getbbox()
+    if bbox:
+        img = img.crop(bbox)
+    img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+    return _harden(img)
 
 
 
@@ -156,9 +209,7 @@ class F1LogoLoader:
 
         if logo_path.exists():
             try:
-                img = Image.open(logo_path).convert("RGBA")
-                img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
-                return img
+                return _prepare_logo(logo_path, max_width, max_height)
             except Exception as e:
                 logger.warning("Failed to load logo for %s: %s",
                              constructor_id, e)
@@ -169,10 +220,7 @@ class F1LogoLoader:
             alt_path = self.teams_dir / f"{variation}.png"
             if alt_path.exists():
                 try:
-                    img = Image.open(alt_path).convert("RGBA")
-                    img.thumbnail((max_width, max_height),
-                                Image.Resampling.LANCZOS)
-                    return img
+                    return _prepare_logo(alt_path, max_width, max_height)
                 except Exception as e:
                     logger.debug("Failed to load logo variant %s: %s",
                                  alt_path, e)
