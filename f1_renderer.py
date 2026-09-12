@@ -119,6 +119,10 @@ def _team_color_bright(constructor_id: str, min_max: int = 150) -> tuple:
 # Live-block marker. Broadcast convention is red for "live"; the header still
 # spells out SC / VSC / RED, so the rail only has to say "this is happening now".
 _LIVE_RAIL = (255, 40, 40)
+# f1-live: the red flag's badge on the live header (design B, 2026-09-12).
+# Brighter than F1 red and a solid block, so it is the one thing on the card
+# that reads as an alarm.
+_RED_FLAG_BADGE = (230, 0, 0)
 
 
 class F1Renderer:
@@ -959,19 +963,23 @@ class F1Renderer:
                            lap: Optional[int] = None,
                            session_label: Optional[str] = None) -> Image.Image:
         """f1-live: live_race header. Same furniture as the finished-race
-        name card; the flag chip (SC / VSC / RED) rides in the title and
-        recolours the bar so it reads at a glance on a 32 px strip.
+        name card. SC and VSC recolour the card and name themselves on the
+        second line. A red flag keeps the usual colours and gets a solid red
+        badge at the end of that line instead (design B, chosen 2026-09-12):
+        the card is red already, so recolouring it -- the first version --
+        barely showed.
         """
         color = F1_RED
         bar = (40, 0, 0)
         chip = (flag or "").upper()
         status = ""
+        badge = None
         if chip == "SC":
             color, bar, status = (255, 220, 0), (40, 30, 0), "SAFETY CAR"
         elif chip == "VSC":
             color, bar, status = (255, 160, 0), (40, 20, 0), "VIRTUAL SC"
         elif chip == "RED":
-            color, bar, status = (255, 60, 60), (50, 0, 0), "RED FLAG"
+            badge = ("RED FLAG", _RED_FLAG_BADGE, (255, 255, 255))
 
         # The lap count and any flag go on the second line, which this card
         # already has and was not using. Cramming them into the title made it
@@ -987,13 +995,15 @@ class F1Renderer:
         if status:
             sub_bits.append(status)
         subtitle = "  ".join(sub_bits)
+        if badge and not subtitle:
+            subtitle = " "      # keep the two-line layout: the badge needs its line
 
         # Measure the chip first so the title truncates clear of it.
         probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
         chip_font = self.fonts["position"]
         chip_w = self._tw(probe, "LIVE", chip_font) + 5
         img = self._render_session_header(title, subtitle, color, bar,
-                                          reserve_right=chip_w)
+                                          reserve_right=chip_w, badge=badge)
         draw = ImageDraw.Draw(img)
         draw.fontmode = "1"
         label = "LIVE"
@@ -1745,11 +1755,16 @@ class F1Renderer:
 
     def _render_session_header(self, title: str, subtitle: str,
                                title_color: tuple, bar_color: tuple,
-                               reserve_right: int = 0) -> Image.Image:
+                               reserve_right: int = 0,
+                               badge: Optional[Tuple[str, tuple, tuple]] = None) -> Image.Image:
         """Shared layout for the qualifying/practice/sprint intro headers:
         colored top bar + F1 logo + title (+ optional subtitle). On tall panels
         the content group is vertically centered and the bar grows to contain it
-        so the header fills the height instead of clustering at the top."""
+        so the header fills the height instead of clustering at the top.
+
+        f1-live: ``badge`` -- (text, fill, text colour) -- is drawn as a solid
+        block at the right end of the subtitle line, and the subtitle is cut
+        short of it (the red flag on the live header, 2026-09-12)."""
         img = Image.new("RGBA", (self.display_width, self.display_height), (0, 0, 0, 255))
         draw = ImageDraw.Draw(img)
         # Disable anti-aliasing: pixel/bitmap fonts (e.g. PressStart2P) get
@@ -1818,11 +1833,27 @@ class F1Renderer:
         self._draw_text_outlined(draw, (hx, top), title_trunc, title_font, fill=title_color)
 
         if subtitle and ry is not None:
-            sub = self._truncate(draw, subtitle, sub_font, self.display_width - 4)
+            room = self.display_width - 4
+            if badge:
+                # Leave the badge its width plus a gap, so a long session name
+                # is cut short of it rather than disappearing under it.
+                room -= self._tw(draw, badge[0], sub_font) + 8
+            sub = self._truncate(draw, subtitle, sub_font, room)
             if ry + 5 < self.display_height:
                 self._draw_text_outlined(draw, (2, ry), sub, sub_font,
                                          fill=(190, 190, 190))
+                if badge:
+                    self._draw_badge(draw, ry, badge, sub_font)
         return img
+
+    def _draw_badge(self, draw: ImageDraw.ImageDraw, y: int, badge, font) -> None:
+        """f1-live: a solid block with text, right-aligned on the line at y --
+        the red flag's badge on the live header (design B, 2026-09-12)."""
+        text, fill, text_fill = badge
+        x = self.display_width - self._tw(draw, text, font) - 4
+        box = draw.textbbox((x, y), text, font=font)
+        draw.rectangle([box[0] - 2, box[1] - 2, box[2] + 1, box[3] + 1], fill=fill)
+        draw.text((x, y), text, font=font, fill=text_fill)
 
     def render_session_result_header(self, title: str, race_name: str = "") -> Image.Image:
         # f1-live: last_session. The qualifying header card for any finished
