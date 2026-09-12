@@ -125,6 +125,9 @@ class F1ScoreboardPlugin(BasePlugin):
         self._last_session_sig: Optional[str] = None
         self._last_session_dropped = None
         self._vegas_last_session_cards: List[Image.Image] = []
+        # f1-live: the season schedule, for hiding results from an earlier
+        # Grand Prix once a newer weekend has started.
+        self._schedule_events: Optional[List[Dict]] = None
 
         # Live session state
         self._is_live: bool = False
@@ -535,6 +538,15 @@ class F1ScoreboardPlugin(BasePlugin):
         upcoming = self.data_source.get_upcoming_race()
         if upcoming:
             self._upcoming_race = upcoming
+        # f1-live: the whole schedule, for _stale_sections(). The data
+        # source caches it and get_upcoming_race() has just read it, so
+        # this costs no request; a failure keeps the last good copy.
+        try:
+            events = self.data_source.fetch_schedule()
+        except Exception:
+            events = None
+        if events:
+            self._schedule_events = events
 
     def _update_qualifying(self):
         """Update qualifying results."""
@@ -1293,44 +1305,95 @@ class F1ScoreboardPlugin(BasePlugin):
                     self._scroll_manager.get_vegas_items_for_mode(mode_key))
         return images
 
-    def _qualifying_is_stale(self, now: Optional[datetime] = None) -> bool:
-        """Last weekend's qualifying, now that the next weekend has started.
-
-        Asked for on 2026-09-11: once practice starts for a new Grand Prix, the
-        previous one's qualifying should not be on the ticker. Jolpica publishes
-        the new qualifying only on Saturday, so from FP1 until then this section
-        showed last weekend's -- Monza's Q3 cards on the Friday of the Spanish
-        GP. Compared on dates, because the qualifying (Jolpica) and the schedule
-        (ESPN) share no round numbers: stale when its Grand Prix is dated before
-        the upcoming weekend's first session, and that session has started. The
-        schedule keeps sessions that have happened (status "post"), so FP1 is
-        still in the list once it is under way.
-        """
-        quali = self._qualifying or {}
-        race = self._upcoming_race or {}
+    @staticmethod
+    def _session_time(value) -> Optional[datetime]:
         try:
-            quali_day = datetime.strptime(str(quali.get("date") or "")[:10], "%Y-%m-%d").date()
+            ts = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
         except ValueError:
-            return False
-        starts = []
-        for s in race.get("sessions") or []:
-            try:
-                ts = datetime.fromisoformat(str(s.get("date") or "").replace("Z", "+00:00"))
-            except ValueError:
+            return None
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _called_off(session) -> bool:
+        """A session ESPN lists as cancelled or postponed. It never starts, so a
+        weekend made only of those -- Bahrain and Saudi Arabia in April 2026,
+        every session "Canceled" -- is not a newer weekend, and must not hide
+        the last real one's results."""
+        status = " ".join(str(session.get(k) or "") for k in ("status_detail", "status_short"))
+        return "cancel" in status.lower() or "postpone" in status.lower()
+
+    def _newest_started_weekend(self, now: Optional[datetime] = None):
+        """(race day, name) of the newest Grand Prix weekend whose first session
+        has started -- the one under way, or the one just finished. None if none.
+
+        From the whole schedule, kept by _update_upcoming(). Falls back to the
+        upcoming race alone, which is enough during a weekend but not after it:
+        once a race is over the upcoming race is the next one, and only the
+        schedule still knows the weekend that just ended. Sessions called off
+        do not count (_called_off).
+        """
+        now = now or datetime.now(timezone.utc)
+        events = self._schedule_events or ([self._upcoming_race] if self._upcoming_race else [])
+        best = None
+        for ev in events:
+            if not isinstance(ev, dict):
                 continue
-            starts.append(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc))
-        if not starts:
-            return False
-        first = min(starts)
-        stale = first <= (now or datetime.now(timezone.utc)) and quali_day < first.date()
-        # Say so once per change, not on every marquee rebuild.
-        note = (quali.get("race_name"), race.get("name")) if stale else None
-        if note != getattr(self, "_stale_quali_note", None):
-            self._stale_quali_note = note
+            starts, race_day = [], None
+            for s in ev.get("sessions") or []:
+                ts = self._session_time(s.get("date"))
+                if ts is None or self._called_off(s):
+                    continue
+                starts.append(ts)
+                if str(s.get("type_abbr") or "").lower() == "race":
+                    race_day = ts.date()
+            if not starts:
+                continue
+            first = min(starts)
+            if first <= now and (best is None or first > best[0]):
+                best = (first, race_day or max(starts).date(), ev.get("name") or "")
+        return (best[1], best[2]) if best else None
+
+    def _stale_sections(self, now: Optional[datetime] = None) -> set:
+        """Result sections showing a Grand Prix older than the newest weekend.
+
+        Asked for on 2026-09-11. First qualifying: once practice starts for a
+        new Grand Prix, the previous one's qualifying should be off the ticker
+        -- Monza's Q3 cards were still scrolling on the Friday of the Spanish
+        GP, because Jolpica publishes the new round only on Saturday. Then the
+        race result too ("I'm still seeing last week results").
+
+        Keyed on the newest weekend that has STARTED, not on the upcoming race,
+        so last weekend does not come back on Sunday evening: by then the
+        upcoming race is the next one, while Jolpica can take an hour or two to
+        publish the race that just finished. Dates, not rounds -- the Jolpica
+        results and the ESPN schedule share no round numbers. A result is stale
+        when its Grand Prix is dated before the newest weekend's race day.
+        """
+        newest = self._newest_started_weekend(now)
+        hide = set()
+        notes = getattr(self, "_stale_notes", None)
+        if notes is None:
+            notes = self._stale_notes = {}
+        latest_race = (self._recent_races or [None])[0]
+        for section, data, what in (("qualifying", self._qualifying, "qualifying"),
+                                    ("last_race", latest_race, "race result")):
+            stale = False
+            if newest and isinstance(data, dict):
+                try:
+                    day = datetime.strptime(str(data.get("date") or "")[:10], "%Y-%m-%d").date()
+                    stale = day < newest[0]
+                except ValueError:
+                    stale = False
+            note = (data.get("race_name"), newest[1]) if stale else None
+            if note != notes.get(section):
+                notes[section] = note
+                if stale:
+                    self.logger.info("Hiding the %s %s: the %s weekend has started",
+                                     data.get("race_name") or "previous", what,
+                                     newest[1] or "next")
             if stale:
-                self.logger.info("Hiding the %s qualifying: the %s weekend has started",
-                                 quali.get("race_name") or "previous", race.get("name") or "next")
-        return stale
+                hide.add(section)
+        return hide
 
     def get_vegas_content(self) -> Optional[List[Image.Image]]:
         """Return rendered cards for the configured marquee sections."""
@@ -1361,9 +1424,10 @@ class F1ScoreboardPlugin(BasePlugin):
             emitted.append("last_session")
             if str((self._last_session or {}).get("session_type") or "").lower() == "qualifying":
                 seen.add("qualifying")
-        # f1-live: last weekend's qualifying goes once the next weekend starts.
-        if self._qualifying_is_stale():
-            seen.add("qualifying")
+        # f1-live: results older than the newest weekend under way (or just
+        # done) go -- last weekend's qualifying and race once FP1 of the
+        # next one starts, and they do not come back after it.
+        seen.update(self._stale_sections())
         for section in self._vegas_sections():
             if section in seen:
                 continue

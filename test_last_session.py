@@ -89,6 +89,8 @@ def plugin(final=None, result_sessions=("Practice", "Qualifying"), cache=None):
     p._vegas_live_race_cards = []
     p._qualifying = None
     p._upcoming_race = None
+    p._recent_races = []
+    p._schedule_events = None
     # One marker per card, so the marquee order can be read back.
     p._build_session_result_cards = lambda s: ["result:%s" % e["code"] for e in s["entries"]]
     p._vegas_section_images = lambda section: ["section:%s" % section]
@@ -241,13 +243,68 @@ def test_last_weekends_qualifying_goes_when_practice_starts():
     p._upcoming_race = weekend(now - timedelta(hours=3))
     images = p.get_vegas_content()
     check("once its first session has started, it goes", "section:qualifying" not in images, images)
-    check("and the last race stays", "section:last_race" in images, images)
+    check("and the upcoming race card stays", "section:upcoming" in images, images)
     p._qualifying = {"race_name": "Spanish Grand Prix",
                      "date": (now + timedelta(days=2)).strftime("%Y-%m-%d")}
     check("this weekend's qualifying, once published, is shown",
           "section:qualifying" in p.get_vegas_content())
     p._upcoming_race, p._qualifying = None, {"date": "2026-09-06"}
     check("with no schedule, nothing is hidden", "section:qualifying" in p.get_vegas_content())
+
+
+def test_last_weekends_race_goes_too_and_does_not_come_back():
+    """Asked for 2026-09-11, after qualifying: no results from last weekend once
+    the new weekend has started -- the race result as well. And after the new
+    race it must not return while Jolpica is still publishing the new one: the
+    newest weekend that has started decides, not the upcoming race."""
+    now = datetime.now(timezone.utc)
+    monza = {"race_name": "Italian Grand Prix",
+             "date": (now - timedelta(days=5)).strftime("%Y-%m-%d")}
+    p = plugin()
+    p._recent_races = [monza]
+    p._upcoming_race = weekend(now + timedelta(hours=3))
+    check("before the next weekend starts, the last race stays",
+          "section:last_race" in p.get_vegas_content())
+    p._upcoming_race = weekend(now - timedelta(hours=3))
+    images = p.get_vegas_content()
+    check("once its first session has started, the last race goes too",
+          "section:last_race" not in images, images)
+    # Sunday evening: the new race is over, the upcoming race is the one after,
+    # and Jolpica still has Monza.
+    spain = weekend(now - timedelta(days=2, hours=6))        # its race ended ~6 h ago
+    nxt = weekend(now + timedelta(days=12))
+    p._schedule_events = [weekend(now - timedelta(days=9)), spain, nxt]
+    p._upcoming_race = nxt
+    images = p.get_vegas_content()
+    check("after the new race, last weekend does not come back while Jolpica catches up",
+          "section:last_race" not in images, images)
+    p._recent_races = [{"race_name": "Spanish Grand Prix",
+                        "date": (now - timedelta(hours=6)).strftime("%Y-%m-%d")}]
+    check("and the new race result shows once it is published",
+          "section:last_race" in p.get_vegas_content())
+
+
+def test_a_cancelled_weekend_is_not_a_newer_weekend():
+    """ESPN keeps cancelled Grands Prix in the schedule, dates and all -- in 2026
+    Bahrain and Saudi Arabia, every session "Canceled". A weekend that never
+    ran must not hide the last real one's results."""
+    now = datetime.now(timezone.utc)
+    japan = {"race_name": "Japanese Grand Prix",
+             "date": (now - timedelta(days=12)).strftime("%Y-%m-%d")}
+    called_off = weekend(now - timedelta(days=2))
+    for s in called_off["sessions"]:
+        s.update(status_state="post", status_detail="Canceled", status_short="Canceled")
+    p = plugin()
+    p._qualifying, p._recent_races = dict(japan), [dict(japan)]
+    p._schedule_events = [weekend(now - timedelta(days=14)), called_off,
+                          weekend(now + timedelta(days=12))]
+    images = p.get_vegas_content()
+    check("a cancelled weekend does not hide the last real race", "section:last_race" in images,
+          images)
+    check("nor its qualifying", "section:qualifying" in images, images)
+    called_off["sessions"][0].update(status_detail="Final", status_short="Final")
+    check("a weekend whose first session ran still counts",
+          "section:last_race" not in p.get_vegas_content())
 
 
 if __name__ == "__main__":
