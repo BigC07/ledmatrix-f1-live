@@ -31,9 +31,14 @@ logger = logging.getLogger(__name__)
 #   - cadillac: pixel art drawn for the panel at the row's 20 px -- the colour
 #     crest the user picked (tools/f1_cadillac_logo.py, 2026-09-12) in place of
 #     a thin "CAD" placeholder -- so cropping or hardening would only damage it
+#   - audi: the 2026 Audi team normalises to sauber, and draws audi.png when it
+#     is there: the four rings as pixel art for the panel (tools/f1_audi_logo.py,
+#     2026-09-13), in place of the Sauber K the user tired of. Unprocessed, like
+#     cadillac; sauber.png and its K stay as the fallback.
 _KEEP_ONLY = {"sauber": lambda r, g, b: g > 120 and r < 120 and b < 120}
 _TILE_SEEDS = {"ferrari": ((2, 48), (93, 48)), "haas": ((14, 48), (81, 48))}
-_NO_HARDEN = {"cadillac"}
+_NO_HARDEN = {"cadillac", "audi"}
+_PREFERRED_FILES = {"sauber": ("audi",)}
 
 
 def _harden(img: Image.Image) -> Image.Image:
@@ -158,6 +163,12 @@ class F1LogoLoader:
             PIL Image in RGBA mode
         """
         normalized = normalize_constructor_id(constructor_id)
+        # A file drawn for today's team wins over the one its id normalises to
+        # (the 2026 Audi team normalises to sauber; see _PREFERRED_FILES).
+        for stem in _PREFERRED_FILES.get(normalized, ()):
+            if (self.teams_dir / f"{stem}.png").exists():
+                normalized = stem
+                break
         cache_key = f"team_{normalized}_{max_width}x{max_height}"
 
         if cache_key in self._cache:

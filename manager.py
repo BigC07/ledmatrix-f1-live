@@ -19,7 +19,8 @@ from PIL import Image
 from src.plugin_system.base_plugin import BasePlugin, VegasDisplayMode
 
 from f1_data import F1DataSource
-from f1_live import (LiveRaceFeed, live_header_title, live_row_from_entry)
+from f1_live import (LiveRaceFeed, fastest_lap_code, live_header_title,
+                     live_row_from_entry)
 from f1_signalr import SignalRLiveFeed
 from f1_renderer import F1Renderer
 from logo_downloader import F1LogoLoader
@@ -1258,10 +1259,16 @@ class F1ScoreboardPlugin(BasePlugin):
                        or "interval").strip().lower()
         if race_gap not in ("interval", "leader"):
             race_gap = "interval"
+        # The race's fastest lap so far, marked on its holder's row (asked for
+        # on 2026-09-13). Not in practice or qualifying, where every row is
+        # already a best lap.
+        fastest = None if timed else fastest_lap_code(entries)
         for entry in shown:
-            cards.append(r.render_race_row(
-                live_row_from_entry(entry, leader_lap, timed=timed, race_gap=race_gap),
-                live=True))
+            row = live_row_from_entry(entry, leader_lap, timed=timed, race_gap=race_gap)
+            if fastest and (entry.get("code") or "") == fastest:
+                row["fastest_lap"] = True
+                row["fastest_lap_time"] = entry.get("best_lap") or ""
+            cards.append(r.render_race_row(row, live=True))
         return cards
 
     # ─── Vegas Mode ────────────────────────────────────────────────────

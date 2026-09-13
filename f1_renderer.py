@@ -1153,6 +1153,41 @@ class F1Renderer:
                     draw.point((x + ox, y + oy), fill=fill)
                 x += int(round(draw.textlength(".", font=font)))
 
+    # f1-live: the fastest-lap stopwatch (2026-09-13). Purple is what F1's own
+    # timing uses for the fastest; the lap time beside it is a lighter orchid,
+    # so it reads as neither part of the stopwatch nor of the white gap.
+    FL_PURPLE = (170, 70, 255)
+    FL_TIME = (240, 130, 255)
+    _FL_ICON = ("..#..", ".###.", ".###.", "#####", "#####", "#####", ".###.")
+    _FL_HAND = ((2, 3), (2, 4), (3, 4))
+
+    def _draw_fastest_lap(self, draw, x: int, y: int, right_limit: int,
+                          lap_time: str, font) -> None:
+        """The stopwatch at (x, y), then the lap time if it fits before
+        right_limit -- a digit shorter at a time, down to whole seconds -- so
+        nothing is drawn past right_limit."""
+        icon_w = len(self._FL_ICON[0])
+        if x + icon_w > right_limit:
+            return
+        for dy, line in enumerate(self._FL_ICON):
+            for dx, ch in enumerate(line):
+                if ch == "#":
+                    draw.point((x + dx, y + dy), fill=self.FL_PURPLE)
+        for dx, dy in self._FL_HAND:
+            draw.point((x + dx, y + dy), fill=(240, 240, 240))
+        text = lap_time.strip()
+        if not text:
+            return
+        tries = [text]
+        if "." in text:
+            head, frac = text.split(".", 1)
+            tries += [head + "." + frac[:n] for n in range(len(frac) - 1, 0, -1)] + [head]
+        tx = x + icon_w + 3
+        for t in tries:
+            if tx + self._tw(draw, t, font) <= right_limit:
+                self._draw_time_text(draw, (tx, y), t, font, self.FL_TIME)
+                return
+
     def render_race_row(self, entry: Dict, live: bool = False) -> Image.Image:
         """One finisher, as a full card.
 
@@ -1240,13 +1275,14 @@ class F1Renderer:
                     and line2.count(":") >= 2):
                 line2 = line2.rsplit(".", 1)[0]
             line2_fill = (210, 210, 210)
+        line2_end = x
         if line2:
-            self._draw_time_text(
-                draw, (x, row2),
-                self._truncate(draw, line2, line2_font, content_max_x - x),
-                line2_font, line2_fill)
+            line2_shown = self._truncate(draw, line2, line2_font, content_max_x - x)
+            self._draw_time_text(draw, (x, row2), line2_shown, line2_font, line2_fill)
+            line2_end = x + self._tw(draw, line2_shown, line2_font)
 
         # Line 2 right: places gained or lost, tucked against the team logo.
+        right_limit = content_max_x
         grid_pos = entry.get("grid", 0)
         pos_val = entry.get("position", 0)
         if self.show_position_delta and grid_pos > 0 and pos_val > 0:
@@ -1259,6 +1295,15 @@ class F1Renderer:
                 if d_x > x + 20:
                     draw.text((d_x, row2), delta_str, font=line2_font,
                               fill=delta_color)
+                    right_limit = d_x - 3
+
+        # f1-live: the race's fastest lap on the live board (asked for on
+        # 2026-09-13, picked from mock-ups): a purple stopwatch after the gap,
+        # and the lap time beside it in its own colour.
+        live_fl = bool(live and entry.get("fastest_lap", False))
+        if live_fl:
+            self._draw_fastest_lap(draw, line2_end + 3, row2, right_limit,
+                                   str(entry.get("fastest_lap_time") or ""), line2_font)
 
         logo = self.logo_loader.get_team_logo(cid, max_height=row_logo_w,
                                               max_width=row_logo_w)
@@ -1266,7 +1311,9 @@ class F1Renderer:
             img.paste(logo, (self.display_width - logo.width - 2,
                              (content_h - logo.height) // 2), logo)
 
-        if self.show_fl_dot and entry.get("fastest_lap", False):
+        # The upstream corner dot, for finished races; a live row has the
+        # stopwatch instead.
+        if self.show_fl_dot and entry.get("fastest_lap", False) and not live_fl:
             draw.rectangle([self.display_width - 4, 2, self.display_width - 2, 4],
                            fill=self.fl_dot_color)
 

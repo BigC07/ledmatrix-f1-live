@@ -152,6 +152,39 @@ def format_gap(gap: Any, position: Optional[int],
     return "", "Finished"
 
 
+def lap_seconds(value: Any) -> Optional[float]:
+    """'1:31.234' -> 91.234 and '91.234' -> 91.234; None for blanks and labels."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if value > 0 else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    s = value.strip()
+    try:
+        if ":" in s:
+            minutes, secs = s.split(":", 1)
+            total = int(minutes) * 60 + float(secs)
+        else:
+            total = float(s)
+    except ValueError:
+        return None
+    return total if total > 0 else None
+
+
+def fastest_lap_code(entries: Any) -> Optional[str]:
+    """The code of the driver holding the race's fastest lap so far, from each
+    entry's best_lap; None while no one has a lap time. A tie goes to the car
+    ahead in the running order. Asked for on 2026-09-13: the TV marks the
+    holder, and the board should too."""
+    best, code = None, None
+    for e in entries or ():
+        t = lap_seconds(e.get("best_lap"))
+        if t is not None and (best is None or t < best):
+            best, code = t, (e.get("code") or None)
+    return code
+
+
 def live_header_title(state: Dict[str, Any], race_name: str = "") -> str:
     """Title for the live header card: `ITALIAN GP · LAP 15` when we have a
     name, otherwise `MONZA · LAP 15`."""

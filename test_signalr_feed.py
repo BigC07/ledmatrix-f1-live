@@ -609,6 +609,25 @@ def test_race_gap_interval():
           times[:2] == ["LEADER", "+1.234"], times)
 
 
+def test_fastest_lap_code():
+    """The race's fastest lap so far, and whose it is (2026-09-13)."""
+    from f1_live import fastest_lap_code, lap_seconds
+    check("a lap time is parsed", abs(lap_seconds("1:31.234") - 91.234) < 1e-9,
+          lap_seconds("1:31.234"))
+    check("bare seconds are parsed", lap_seconds("91.5") == 91.5)
+    check("blank and missing are None", lap_seconds("") is None and lap_seconds(None) is None)
+    check("a label is None", lap_seconds("LAP 23") is None)
+    e = [{"code": "LEC", "best_lap": "1:32.100"}, {"code": "ANT", "best_lap": "1:31.900"},
+         {"code": "NOR", "best_lap": "1:31.234"}, {"code": "VER", "best_lap": ""}]
+    check("the holder has the lowest best lap", fastest_lap_code(e) == "NOR", fastest_lap_code(e))
+    check("no lap times yet: no holder",
+          fastest_lap_code([{"code": "LEC", "best_lap": ""}]) is None)
+    tie = [{"code": "LEC", "best_lap": "1:31.234"}, {"code": "NOR", "best_lap": "1:31.234"}]
+    check("a tie goes to the car ahead", fastest_lap_code(tie) == "LEC", fastest_lap_code(tie))
+    snap = race_feed().state()
+    check("race entries carry best_lap", all("best_lap" in x for x in snap["entries"]))
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

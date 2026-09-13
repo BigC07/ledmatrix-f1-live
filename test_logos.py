@@ -85,8 +85,12 @@ def test_sauber_is_just_the_green_k():
     check("sauber: every lit pixel is green -- no wordmark, no ring",
           all(g > r and g > b for r, g, b, a in lit),
           [p for p in lit if not (p[1] > p[0] and p[1] > p[2])][:3])
+    # Since 2026-09-13 the Audi team draws audi.png, its rings as pixel art;
+    # sauber.png's K is the fallback when that file is missing.
     audi = L.get_team_logo("Audi", SIZE, SIZE)
-    check("the 2026 Audi team gets the same K", audi.tobytes() == logo("sauber").tobytes())
+    check("the 2026 Audi team gets its rings (audi.png), not the K",
+          audi.tobytes() == logo("audi").tobytes()
+          and audi.tobytes() != logo("sauber").tobytes())
 
 
 def test_ferrari_and_haas_lose_their_white_tile():
