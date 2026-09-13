@@ -959,6 +959,47 @@ class F1Renderer:
             name.replace("Grand Prix", "GP").strip(), "GRAND PRIX",
             F1_RED, (40, 0, 0))
 
+    # f1-live: the winner pop-up (asked for on 2026-09-13: "a checkered flag
+    # with the winner's name in it"). Chequered bands at both ends; the Grand
+    # Prix and WINNER in gold on top; the surname big, in the team's colour.
+    _CHECK = 4
+    WINNER_GOLD = (255, 205, 0)
+    CHECK_WHITE = (235, 235, 235)
+
+    def render_winner_card(self, last_name: str, constructor_id: str = "",
+                           race_name: str = "") -> Image.Image:
+        w, h = self.display_width, self.display_height
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(img)
+        draw.fontmode = "1"
+        c = self._CHECK
+        band = 4 * c
+        for x0 in (0, w - band):
+            for y in range(0, h, c):
+                for x in range(x0, x0 + band, c):
+                    if (x // c + y // c) % 2 == 0:
+                        draw.rectangle([x, y, x + c - 1, y + c - 1], fill=self.CHECK_WHITE)
+        left, avail = band + 2, w - 2 * band - 4
+        top_font = self._row_time_font()
+        race = (race_name or "").replace("Grand Prix", "GP").strip().upper()
+        tries = ["%s WINNER" % race] if race else []
+        if race.endswith(" GP"):
+            tries.append("%s WINNER" % race[:-3])
+        top = next((t for t in tries if self._tw(draw, t, top_font) <= avail), "WINNER")
+        draw.text((left + (avail - self._tw(draw, top, top_font)) // 2, 2), top,
+                  font=top_font, fill=self.WINNER_GOLD)
+        name = (last_name or "").upper()
+        name_font = self._race_position_font()
+        if self._tw(draw, name, name_font) > avail:
+            name_font = self._race_name_font()
+        name = self._truncate(draw, name, name_font, avail)
+        nw, nh = self._tw(draw, name, name_font), self._th(draw, name, name_font)
+        colour = get_team_color(constructor_id) if constructor_id else (255, 255, 255)
+        y = 11 + max(0, (h - 11 - nh) // 2)
+        self._draw_text_outlined(draw, (left + (avail - nw) // 2, y), name, name_font,
+                                 fill=colour)
+        return img
+
     def render_live_header(self, title: str, flag: Optional[str] = None,
                            lap: Optional[int] = None,
                            session_label: Optional[str] = None) -> Image.Image:

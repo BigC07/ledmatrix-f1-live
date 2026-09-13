@@ -238,8 +238,10 @@ def test_last_weekends_qualifying_goes_when_practice_starts():
     p._qualifying = {"race_name": "Italian Grand Prix",
                      "date": (now - timedelta(days=5)).strftime("%Y-%m-%d")}
     p._upcoming_race = weekend(now + timedelta(hours=3))
-    check("before the next weekend starts, last weekend's qualifying stays",
-          "section:qualifying" in p.get_vegas_content())
+    # Changed 2026-09-13: qualifying goes when its own race starts, so last
+    # weekend's is gone before the next weekend begins (test_quali_cutoff.py).
+    check("its race has run, so last weekend's qualifying is gone before the next weekend",
+          "section:qualifying" not in p.get_vegas_content())
     p._upcoming_race = weekend(now - timedelta(hours=3))
     images = p.get_vegas_content()
     check("once its first session has started, it goes", "section:qualifying" not in images, images)
@@ -249,7 +251,11 @@ def test_last_weekends_qualifying_goes_when_practice_starts():
     check("this weekend's qualifying, once published, is shown",
           "section:qualifying" in p.get_vegas_content())
     p._upcoming_race, p._qualifying = None, {"date": "2026-09-06"}
-    check("with no schedule, nothing is hidden", "section:qualifying" in p.get_vegas_content())
+    check("with no schedule, qualifying whose race day is over is hidden",
+          "section:qualifying" not in p.get_vegas_content())
+    p._qualifying = {"date": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
+    check("and with no schedule, qualifying for a race still to come is shown",
+          "section:qualifying" in p.get_vegas_content())
 
 
 def test_last_weekends_race_goes_too_and_does_not_come_back():
@@ -301,7 +307,8 @@ def test_a_cancelled_weekend_is_not_a_newer_weekend():
     images = p.get_vegas_content()
     check("a cancelled weekend does not hide the last real race", "section:last_race" in images,
           images)
-    check("nor its qualifying", "section:qualifying" in images, images)
+    # Changed 2026-09-13: its qualifying goes anyway, because its race has run.
+    check("its qualifying is gone: its race has run", "section:qualifying" not in images, images)
     called_off["sessions"][0].update(status_detail="Final", status_short="Final")
     check("a weekend whose first session ran still counts",
           "section:last_race" not in p.get_vegas_content())

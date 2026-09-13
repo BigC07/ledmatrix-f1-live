@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from PIL import Image
@@ -131,6 +131,13 @@ class F1ScoreboardPlugin(BasePlugin):
         self._last_session_sig: Optional[str] = None
         self._last_session_dropped = None
         self._vegas_last_session_cards: List[Image.Image] = []
+        # f1-live: after a race (asked for on 2026-09-13) -- a chequered winner
+        # card offered as an alert a few times, then the top three at the front
+        # of the F1 block until Jolpica publishes the race. Persisted, so a
+        # restart neither loses nor repeats it; see _poll_podium().
+        self._podium: Optional[Dict] = self._restore_podium()
+        self._podium_cards: List[Image.Image] = []
+        self._podium_sig: Optional[str] = None
         # f1-live: the season schedule, for hiding results from an earlier
         # Grand Prix once a newer weekend has started.
         self._schedule_events: Optional[List[Dict]] = None
@@ -204,8 +211,10 @@ class F1ScoreboardPlugin(BasePlugin):
         types = cfg.get("session_types") or ["Race"]
         if not isinstance(types, (list, tuple)):
             types = ["Race"]
+        # f1-live: the race's final order too, for the podium (_poll_podium);
+        # _poll_last_session() takes only practice and qualifying from it.
         feed = SignalRLiveFeed(logger=self.logger, session_types=types,
-                               result_types=self._result_session_types(cfg))
+                               result_types=self._result_session_types(cfg) + ["Race"])
         feed.start()
         return feed
 
@@ -286,12 +295,24 @@ class F1ScoreboardPlugin(BasePlugin):
             elif time.time() - (stored.get("captured_at") or 0) > self._LAST_SESSION_TTL:
                 self._last_session_dropped = stored.get("session_key")
                 self._set_last_session(None)
+            # f1-live: a qualifying result goes when the race starts, even one
+            # never seen live here (asked for on 2026-09-13).
+            elif (str(stored.get("session_type") or "").lower() == "qualifying"
+                  and self._race_started_since(stored.get("captured_at") or 0)):
+                self.logger.info("The race has started; dropping the %s result",
+                                 stored.get("session_name"))
+                self._last_session_dropped = stored.get("session_key")
+                self._set_last_session(None)
         if wanted:
             final_fn = getattr(self._live_feed, "final_snapshot", None)
             final = final_fn() if callable(final_fn) else None
             # The feed holds a finished session until a new one replaces it, so
-            # one already dropped must not come straight back.
+            # one already dropped must not come straight back. It keeps a race's
+            # final order too (for _poll_podium): only the wanted practice and
+            # qualifying types are a session result.
             if (final and final.get("entries")
+                    and str(final.get("session_type") or "").lower()
+                    in {t.lower() for t in wanted}
                     and final.get("session_key") != self._last_session_dropped):
                 self._set_last_session(final)
         sig = self._last_session_signature(self._last_session)
@@ -333,6 +354,158 @@ class F1ScoreboardPlugin(BasePlugin):
                 "best_lap": e.get("best_lap") or "",
                 "gap": ("+%.3f" % gap) if isinstance(gap, (int, float)) and gap > 0 else "",
             }))
+        return cards
+
+    # ─── After the race: winner and podium (F1 feed) ───────────────────
+    # f1-live, asked for on 2026-09-13 as the Spanish GP ended: "a message pop-up
+    # saying the winner", "a checkered flag with the winner's name in it for a
+    # few passes", then "a list of the top three ... until it goes back into the
+    # results mode". The final order comes from F1's feed: the live snapshot
+    # once the flag has fallen (the board holds it a few minutes), or the feed's
+    # final snapshot, which a restart still gets while F1 streams the session.
+    # Jolpica's race result takes over once it has the race.
+    _PODIUM_KEY = "f1_live_podium"
+    _PODIUM_TTL = 36 * 3600
+    _WINNER_PASSES = 4
+    _WINNER_GAP_S = 50      # polls are 20-60 s apart, so about a minute
+
+    def _restore_podium(self) -> Optional[Dict]:
+        cm = getattr(self, "cache_manager", None)
+        try:
+            data = cm.get(self._PODIUM_KEY, max_age=self._PODIUM_TTL) if cm else None
+        except Exception:
+            return None
+        if isinstance(data, dict) and (data.get("entries") or data.get("dropped")):
+            return data
+        return None
+
+    def _save_podium(self) -> None:
+        cm = getattr(self, "cache_manager", None)
+        try:
+            if self._podium:
+                cm.set(self._PODIUM_KEY, self._podium, ttl=self._PODIUM_TTL)
+            else:
+                cm.delete(self._PODIUM_KEY)
+        except Exception as e:
+            self.logger.debug("Podium not persisted: %s", e)
+
+    def _drop_podium(self, why: str) -> None:
+        """Off the ticker for good. A marker stays in its place, so the race
+        the feed still holds is not captured again, restart or not."""
+        podium = self._podium or {}
+        if podium.get("entries"):
+            self.logger.info("Podium for %s dropped: %s",
+                             podium.get("meeting_name") or "the race", why)
+        self._podium = {"session_key": podium.get("session_key"), "dropped": True,
+                        "captured_at": podium.get("captured_at") or time.time()}
+        self._podium_cards = []
+        self._podium_sig = None
+        self._save_podium()
+
+    def _podium_published(self, podium: Dict) -> bool:
+        """Jolpica's newest race result is dated on or after the day the podium
+        was captured, less a day for a race that ends after midnight UTC."""
+        latest = (getattr(self, "_recent_races", None) or [None])[0]
+        if not isinstance(latest, dict):
+            return False
+        try:
+            day = datetime.strptime(str(latest.get("date") or "")[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return False
+        captured = datetime.fromtimestamp(podium.get("captured_at") or 0, tz=timezone.utc).date()
+        return day >= captured - timedelta(days=1)
+
+    @staticmethod
+    def _is_race_result(snap: Optional[Dict]) -> bool:
+        """A finished Grand Prix. Not a sprint: the feed types both "Race"."""
+        return bool(snap and snap.get("finished") and snap.get("entries")
+                    and str(snap.get("session_type") or "").lower() == "race"
+                    and "sprint" not in str(snap.get("session_name") or "").lower())
+
+    @staticmethod
+    def _podium_rows(entries) -> List:
+        return [(e.get("position"), e.get("code"), e.get("gap_to_leader"))
+                for e in entries or []]
+
+    def _winner_card(self, podium: Dict) -> Image.Image:
+        top = podium["entries"][0]
+        return self._scroll_renderer.render_winner_card(
+            top.get("last_name") or top.get("code") or "",
+            top.get("constructor_id") or "", podium.get("meeting_name") or "")
+
+    def _poll_podium(self, live: Optional[Dict]) -> None:
+        """On the update tick, after _poll_last_session(): capture a finished
+        race, offer the winner card a few times about a minute apart, and keep
+        the top three until Jolpica has the race."""
+        if not getattr(self, "_last_update", 0):
+            return      # Jolpica not read yet: no telling whether it has the race
+        podium = self._podium
+        final = live if self._is_race_result(live) else None
+        if final is None:
+            final_fn = getattr(self._live_feed, "final_snapshot", None)
+            final = final_fn() if callable(final_fn) else None
+            if not self._is_race_result(final):
+                final = None
+        if final:
+            top = [dict(e) for e in final["entries"][:3]]
+            if not podium or podium.get("session_key") != final.get("session_key"):
+                podium = self._podium = {
+                    "session_key": final.get("session_key"),
+                    "meeting_name": final.get("meeting_name") or self._live_race_name(final) or "",
+                    "entries": top,
+                    "lap": final.get("lap"),
+                    "captured_at": time.time(),
+                    "winner_left": self._WINNER_PASSES,
+                    "winner_next": 0.0,
+                }
+                self._save_podium()
+                self.logger.info("Race over: %s wins; podium %s", top[0].get("code"),
+                                 ",".join(e.get("code") or "?" for e in top))
+            elif (not podium.get("dropped")
+                  and self._podium_rows(top) != self._podium_rows(podium.get("entries"))):
+                # The field finishes its last lap after the winner does.
+                podium["entries"] = top
+                self._save_podium()
+                self.logger.info("Podium updated: %s",
+                                 ",".join(e.get("code") or "?" for e in top))
+        if not podium or podium.get("dropped"):
+            self._podium_cards = []
+            return
+        if live and not live.get("finished") and live.get("session_key") != podium.get("session_key"):
+            self._drop_podium("%s is live" % (live.get("session_name") or "a session"))
+            return
+        if self._podium_published(podium):
+            self._drop_podium("Jolpica has the result")
+            return
+        now = time.time()
+        if now - (podium.get("captured_at") or 0) > self._PODIUM_TTL:
+            self._drop_podium("too old")
+            return
+        if podium.get("winner_left", 0) > 0 and now >= podium.get("winner_next", 0):
+            self._offer_alert("winner:%s:%d" % (podium.get("session_key"), podium["winner_left"]),
+                              self._winner_card(podium))
+            podium["winner_left"] -= 1
+            podium["winner_next"] = now + self._WINNER_GAP_S
+            self._save_podium()
+        sig = json.dumps([podium.get("session_key"), self._podium_rows(podium["entries"])],
+                         default=str)
+        if sig != self._podium_sig:
+            self._podium_sig = sig
+            self._podium_cards = self._build_podium_cards(podium)
+            self.logger.info("Podium cards: %s n=%d",
+                             ",".join(e.get("code") or "?" for e in podium["entries"]),
+                             len(self._podium_cards))
+
+    def _build_podium_cards(self, podium: Dict) -> List[Image.Image]:
+        """The PODIUM header and a race row each for the top three: WINNER on
+        the first, the gap to the winner on the others."""
+        r = self._scroll_renderer
+        cards = [r.render_session_result_header("PODIUM", podium.get("meeting_name") or "")]
+        for e in podium.get("entries") or []:
+            row = live_row_from_entry(e, podium.get("lap"), race_gap="leader")
+            if e.get("position") == 1:
+                row["time"] = "WINNER"
+            cards.append(r.render_race_row(row))
         return cards
 
     def _resolve_timezone(self, config: Dict, cache_manager, plugin_manager=None) -> str:
@@ -1101,6 +1274,10 @@ class F1ScoreboardPlugin(BasePlugin):
             self._poll_last_session(snap)
         except Exception as e:
             self.logger.warning("Session result error: %s", e, exc_info=True)
+        try:
+            self._poll_podium(snap)
+        except Exception as e:
+            self.logger.warning("Podium error: %s", e, exc_info=True)
         sig = self._live_cards_signature(snap)
         self._live_snapshot = snap
         if sig == self._live_cards_sig:
@@ -1221,6 +1398,16 @@ class F1ScoreboardPlugin(BasePlugin):
                 want = ""
             os.remove(self._ALERT_TEST_FILE)
         except OSError:
+            return
+        # WINNER: the winner card -- the podium's, or a sample without one.
+        if want == "WINNER":
+            podium = getattr(self, "_podium", None) or {}
+            try:
+                card = (self._winner_card(podium) if podium.get("entries")
+                        else self._scroll_renderer.render_winner_card("TEST", "", ""))
+                self._offer_alert("winner-test:%.3f" % time.time(), card)
+            except Exception as e:
+                self.logger.warning("Test winner alert failed: %s", e)
             return
         flag = self._ALERT_TEST_FLAGS.get(want, "RED")
         try:
@@ -1445,6 +1632,37 @@ class F1ScoreboardPlugin(BasePlugin):
                 best = (first, race_day or max(starts).date(), ev.get("name") or "")
         return (best[1], best[2]) if best else None
 
+    def _race_starts(self) -> List[datetime]:
+        """Start times of the races in the schedule; called-off ones left out."""
+        events = (getattr(self, "_schedule_events", None)
+                  or ([self._upcoming_race] if getattr(self, "_upcoming_race", None) else []))
+        starts = []
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            for s in ev.get("sessions") or []:
+                if str(s.get("type_abbr") or "").lower() != "race" or self._called_off(s):
+                    continue
+                ts = self._session_time(s.get("date"))
+                if ts is not None:
+                    starts.append(ts)
+        return starts
+
+    def _race_started(self, day, now: datetime) -> bool:
+        """Has the race Jolpica dates `day` started? Its start is the schedule's
+        race a day either side (the sources could date a race that starts after
+        midnight UTC a day apart); a race the schedule lacks counts once its day
+        is over."""
+        starts = [ts for ts in self._race_starts() if abs((ts.date() - day).days) <= 1]
+        if starts:
+            return min(starts) <= now
+        return now.date() > day
+
+    def _race_started_since(self, t0: float) -> bool:
+        """Has a race started after t0 (epoch seconds), and by now?"""
+        now = time.time()
+        return any(t0 < ts.timestamp() <= now for ts in self._race_starts())
+
     def _stale_sections(self, now: Optional[datetime] = None) -> set:
         """Result sections showing a Grand Prix older than the newest weekend.
 
@@ -1459,8 +1677,15 @@ class F1ScoreboardPlugin(BasePlugin):
         upcoming race is the next one, while Jolpica can take an hour or two to
         publish the race that just finished. Dates, not rounds -- the Jolpica
         results and the ESPN schedule share no round numbers. A result is stale
-        when its Grand Prix is dated before the newest weekend's race day.
+        when its Grand Prix is dated before the newest weekend's race day, less a
+        day: the two sources agree on every 2026 date, Las Vegas included, but a
+        race that starts after midnight UTC could be dated a day apart.
+
+        Qualifying also goes as its own race starts, without waiting for the
+        next weekend (asked for on 2026-09-13, after the Spanish GP): from then
+        on the wall shows the race's results. See _race_started().
         """
+        now = now or datetime.now(timezone.utc)
         newest = self._newest_started_weekend(now)
         hide = set()
         notes = getattr(self, "_stale_notes", None)
@@ -1469,21 +1694,24 @@ class F1ScoreboardPlugin(BasePlugin):
         latest_race = (self._recent_races or [None])[0]
         for section, data, what in (("qualifying", self._qualifying, "qualifying"),
                                     ("last_race", latest_race, "race result")):
-            stale = False
-            if newest and isinstance(data, dict):
+            day = None
+            if isinstance(data, dict):
                 try:
                     day = datetime.strptime(str(data.get("date") or "")[:10], "%Y-%m-%d").date()
-                    stale = day < newest[0]
                 except ValueError:
-                    stale = False
-            note = (data.get("race_name"), newest[1]) if stale else None
+                    day = None
+            why = None
+            if newest and day is not None and day < newest[0] - timedelta(days=1):
+                why = "the %s weekend has started" % (newest[1] or "next")
+            elif section == "qualifying" and day is not None and self._race_started(day, now):
+                why = "its race has started"
+            note = (data.get("race_name"), why) if why else None
             if note != notes.get(section):
                 notes[section] = note
-                if stale:
-                    self.logger.info("Hiding the %s %s: the %s weekend has started",
-                                     data.get("race_name") or "previous", what,
-                                     newest[1] or "next")
-            if stale:
+                if why:
+                    self.logger.info("Hiding the %s %s: %s",
+                                     data.get("race_name") or "previous", what, why)
+            if why:
                 hide.add(section)
         return hide
 
@@ -1505,6 +1733,12 @@ class F1ScoreboardPlugin(BasePlugin):
             seen.add("live_race")
             seen.add("last_race")
             emitted.append("live_race")
+        # f1-live: after a race, its top three, until Jolpica publishes it
+        # (_poll_podium, asked for on 2026-09-13).
+        elif getattr(self, "_podium_cards", None):
+            images.extend(self._podium_cards)
+            seen.add("podium")
+            emitted.append("podium")
         # f1-live: last_session -- the last finished practice or qualifying,
         # from F1's feed, first until the next session goes live. A stored
         # qualifying result hides the qualifying section: that is the same
