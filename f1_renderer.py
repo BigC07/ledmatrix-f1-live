@@ -1069,6 +1069,90 @@ class F1Renderer:
         self._race_name_font_cache = font
         return font
 
+    def _row_time_font(self):
+        """Font for the times on a driver card's second line, and for the next
+        session's time on the upcoming card.
+
+        f1-live, 2026-09-12. The user found both hard to read from across the
+        room ("make the F1 times on the cards a little bigger"; "make the race
+        time easier to read"). They were in the 4x6 faces, 6px on a 32px card,
+        the smallest type on the wall. 5x8 is one step up and still fits:
+        "1:31.824" is 40px and "+0.011" 30px of the ~99px between the accent
+        bar and the logo, and "RACE 9:00A" is 50px of the upcoming card's
+        58px text column. 6x10 would not fit that column with the label.
+
+        Short panels only, like the position and name fonts; cached.
+        """
+        cached = getattr(self, "_row_time_font_cache", None)
+        if cached is not None:
+            return cached
+        font = self.fonts["detail"]
+        if not self.is_tall:
+            try:
+                bigger = self._load_font("5x8.bdf", 8)
+                if bigger is not None:
+                    font = bigger
+            except Exception:
+                self.logger.debug("5x8.bdf unavailable; times stay at the "
+                                  "default size")
+        self._row_time_font_cache = font
+        return font
+
+    def _period_dot(self, font) -> List[Tuple[int, int]]:
+        """Pixels of the full stop _draw_time_text draws in `font`, relative to
+        where that character's cell is drawn: the colon's lower dot. Empty for
+        any face but the 5x8 time font, whose own full stop is fine to use.
+
+        f1-live (2026-09-12): 5x8's "." is a small plus sign, three rows tall
+        and dipping below the digits. On the panel "1:31.824" read as a comma
+        and "+0.011" as "+0+011". The colon's dot is the same 2x2 block the
+        time already carries. Cached."""
+        if font is not getattr(self, "_row_time_font_cache", None) or font is self.fonts["detail"]:
+            return []
+        cached = getattr(self, "_period_dot_cache", None)
+        if cached is not None:
+            return cached
+        img = Image.new("L", (24, 24))
+        d = ImageDraw.Draw(img)
+        d.fontmode = "1"
+        d.text((0, 0), ":", font=font, fill=255)
+        px = img.load()
+        pts = [(x, y) for y in range(24) for x in range(24) if px[x, y] > 127]
+        rows = sorted({y for _x, y in pts})
+        split, widest = None, 1
+        for a, b in zip(rows, rows[1:]):     # the colon's two dots: the widest gap
+            if b - a > widest:
+                split, widest = b, b - a
+        dot = [(x, y) for x, y in pts if split is not None and y >= split]
+        self._period_dot_cache = dot
+        return dot
+
+    def _draw_time_text(self, draw: ImageDraw.ImageDraw, xy: Tuple[int, int],
+                        text: str, font, fill, outlined: bool = True) -> None:
+        """Draw a lap time, race time or gap, with each "." drawn as the colon's
+        lower dot in the 5x8 time font (see _period_dot). Anything else is drawn
+        exactly as before."""
+        dot = self._period_dot(font) if "." in text else []
+        if not dot:
+            if outlined:
+                self._draw_text_outlined(draw, xy, text, font, fill=fill)
+            else:
+                draw.text(xy, text, font=font, fill=fill)
+            return
+        x, y = xy
+        parts = text.split(".")
+        for i, part in enumerate(parts):
+            if part:
+                if outlined:
+                    self._draw_text_outlined(draw, (x, y), part, font, fill=fill)
+                else:
+                    draw.text((x, y), part, font=font, fill=fill)
+                x += int(round(draw.textlength(part, font=font)))
+            if i < len(parts) - 1:
+                for ox, oy in dot:
+                    draw.point((x + ox, y + oy), fill=fill)
+                x += int(round(draw.textlength(".", font=font)))
+
     def render_race_row(self, entry: Dict, live: bool = False) -> Image.Image:
         """One finisher, as a full card.
 
@@ -1101,7 +1185,9 @@ class F1Renderer:
         pos_font = self._race_position_font()
         pos_text = "P%s" % entry.get("position", "?")
         ph = self._th(draw, pos_text, pos_font)
-        sh = self._th(draw, "A", self.fonts["detail"])
+        # f1-live: the time line in 5x8, not the 4x6 detail face (2026-09-12).
+        line2_font = self._row_time_font()
+        sh = self._th(draw, "A", line2_font)
         ys = self._spread_ys(content_h, [ph, sh])
         top, row2 = ys[0], ys[1]
 
@@ -1155,10 +1241,10 @@ class F1Renderer:
                 line2 = line2.rsplit(".", 1)[0]
             line2_fill = (210, 210, 210)
         if line2:
-            self._draw_text_outlined(
+            self._draw_time_text(
                 draw, (x, row2),
-                self._truncate(draw, line2, self.fonts["detail"], content_max_x - x),
-                self.fonts["detail"], fill=line2_fill)
+                self._truncate(draw, line2, line2_font, content_max_x - x),
+                line2_font, line2_fill)
 
         # Line 2 right: places gained or lost, tucked against the team logo.
         grid_pos = entry.get("grid", 0)
@@ -1168,10 +1254,10 @@ class F1Renderer:
             if delta != 0:
                 delta_str = "+%d" % delta if delta > 0 else str(delta)
                 delta_color = (0, 210, 80) if delta > 0 else (220, 50, 50)
-                d_w = self._tw(draw, delta_str, self.fonts["detail"])
+                d_w = self._tw(draw, delta_str, line2_font)
                 d_x = logo_x - d_w - 2
                 if d_x > x + 20:
-                    draw.text((d_x, row2), delta_str, font=self.fonts["detail"],
+                    draw.text((d_x, row2), delta_str, font=line2_font,
                               fill=delta_color)
 
         logo = self.logo_loader.get_team_logo(cid, max_height=row_logo_w,
@@ -1556,7 +1642,11 @@ class F1Renderer:
         name_font = self._race_name_font()
         pos_text = f"P{entry.get('position', '?')}"
         ph = self._th(draw, pos_text, pos_font)
-        sh = self._th(draw, "A", self.fonts["small"])
+        # f1-live: line 2 (time, gap, OUT, places) in 5x8, not 4x6 (2026-09-12).
+        time_font = self._row_time_font()
+        sh = self._th(draw, "A", time_font)
+        # Line 2 must end above the 2px team-colour line along the bottom.
+        line2_fits = lambda y: y + sh <= content_h - 2  # noqa: E731
         ys = self._spread_ys(content_h, [ph, sh])
         top = ys[0]
         row2_y = ys[1]
@@ -1587,22 +1677,22 @@ class F1Renderer:
         # cut it.
         time_str = entry.get(time_key, "") if time_key else ""
         if time_str:
-            self._draw_text_outlined(
+            self._draw_time_text(
                 draw, (x, row2_y),
-                self._truncate(draw, time_str, self.fonts["detail"], content_max_x - x),
-                self.fonts["detail"], fill=(210, 210, 210))
+                self._truncate(draw, time_str, time_font, content_max_x - x),
+                time_font, (210, 210, 210))
         elif show_eliminated and entry.get("eliminated_in", ""):
-            self._draw_text_outlined(draw, (x, row2_y), "OUT", self.fonts["detail"],
+            self._draw_text_outlined(draw, (x, row2_y), "OUT", time_font,
                                      fill=(220, 60, 60))
 
         # Line 2 right: the gap, right-aligned so it never collides with the time.
         gap_str = entry.get(gap_key, "") if gap_key else ""
-        if gap_str and row2_y + 5 < content_h:
-            gap_trunc = self._truncate(draw, gap_str, self.fonts["small"],
+        if gap_str and line2_fits(row2_y):
+            gap_trunc = self._truncate(draw, gap_str, time_font,
                                        content_max_x - x)
-            gw = self._tw(draw, gap_trunc, self.fonts["small"])
-            draw.text((max(x, content_max_x - gw), row2_y), gap_trunc,
-                      font=self.fonts["small"], fill=(255, 200, 50))
+            gw = self._tw(draw, gap_trunc, time_font)
+            self._draw_time_text(draw, (max(x, content_max_x - gw), row2_y), gap_trunc,
+                                 time_font, (255, 200, 50), outlined=False)
 
         # Position delta (+N/-N) — shown when entry has a grid position (sprint results)
         grid_pos = entry.get("grid", 0)
@@ -1612,11 +1702,11 @@ class F1Renderer:
             if delta != 0:
                 delta_str = f"+{delta}" if delta > 0 else str(delta)
                 delta_color = (0, 210, 80) if delta > 0 else (220, 50, 50)
-                d_w = self._tw(draw, delta_str, self.fonts["small"])
+                d_w = self._tw(draw, delta_str, time_font)
                 d_x = content_max_x - d_w
-                if row2_y + 5 < content_h and d_x > x + 20:
+                if line2_fits(row2_y) and d_x > x + 20:
                     draw.text((d_x, row2_y), delta_str,
-                              font=self.fonts["small"], fill=delta_color)
+                              font=time_font, fill=delta_color)
 
         # Team logo right-aligned
         logo = self.logo_loader.get_team_logo(
@@ -1928,6 +2018,29 @@ class F1Renderer:
                 return f
         return self.fonts["detail"]
 
+    # Session labels on the upcoming card's next-session line, 4 chars max
+    # (see render_upcoming_race).
+    _SESSION_ABBR = {"FP1": "FP1", "FP2": "FP2", "FP3": "FP3",
+                     "Qual": "QUAL", "Race": "RACE", "SS": "SQ", "SR": "SPR"}
+
+    def _next_session_min_line(self, race: Dict) -> str:
+        """The shortest next-session line the upcoming card draws -- the session
+        and its clock, the weekday already dropped -- or "" when there is none.
+
+        f1-live (2026-09-12): measured before the countdown is sized, so the
+        countdown can leave the text column room for it."""
+        next_type = race.get("next_session_type", "")
+        next_date = next((s["date"] for s in race.get("sessions", [])
+                          if s.get("type_abbr") == next_type and s.get("date")), "")
+        if not (next_type and next_date):
+            return ""
+        label = self._SESSION_ABBR.get(next_type, next_type)
+        try:
+            clock = self._to_local_dt(next_date).strftime("%I:%M%p").upper().lstrip("0")[:-1]
+        except (ValueError, TypeError):
+            return f"NEXT: {label}"
+        return f"{label} {clock}"
+
     def render_upcoming_race(self, race: Dict) -> Image.Image:
         """
         Layout:
@@ -1979,6 +2092,16 @@ class F1Renderer:
         cd_wide = cd is not None and circuit_img is None and not self.is_tall
         if cd_wide:
             zone = int(self.display_width * 0.62)      # right-hand share
+            # f1-live (2026-09-12): the next session's time is 5x8 now, and
+            # "RACE 9:00A" is 50px. Beside a 7-character countdown in 10x20
+            # ("12H 41M", 70px) the column had 48px and cut the time to
+            # "RACE 1:..". Leave the column the width of the session and its
+            # clock, and let the countdown drop a tier to fit what remains --
+            # at 9x15 it is still the biggest thing on the card.
+            need = self._next_session_min_line(race)
+            if need:
+                zone = min(zone, self.display_width - x - 6
+                           - self._tw(draw, need, self._row_time_font()))
             cd_font = self._fit_font(draw, cd[0], zone,
                                      [("10x20.bdf", 20), ("9x15.bdf", 15),
                                       ("7x13.bdf", 13), ("6x10.bdf", 10)])
@@ -2014,13 +2137,16 @@ class F1Renderer:
         next_type = race.get("next_session_type", "")
         next_date = next((s["date"] for s in race.get("sessions", [])
                           if s.get("type_abbr") == next_type and s.get("date")), "")
+        # f1-live: the session and its time in 5x8, not the 4x6 small face
+        # (2026-09-12, "make the race time easier to read"). The fitting below
+        # measures in the same face, so the weekday still goes first when the
+        # line is too long for the column.
+        time_font = self._row_time_font()
         if next_type and next_date:
             # 4 chars max. The left column is 58px once the countdown takes its
             # zone, and "QUALI SAT 2:00P" measured 60 -- two pixels over, which
             # would have eaten the meridiem off the end of the time.
-            abbrs = {"FP1": "FP1", "FP2": "FP2", "FP3": "FP3",
-                     "Qual": "QUAL", "Race": "RACE", "SS": "SQ", "SR": "SPR"}
-            sess_label = abbrs.get(next_type, next_type)
+            sess_label = self._SESSION_ABBR.get(next_type, next_type)
             try:
                 dt = self._to_local_dt(next_date)
                 # "FP1 FRI 11:30A" rather than "FP1: FRI 11:30AM" -- the colon
@@ -2040,13 +2166,13 @@ class F1Renderer:
                 # far away this is, so the weekday is the least-loaded token
                 # here, while "P" versus a truncated nothing is not recoverable.
                 if self._tw(draw, f"{sess_label} {time_str}",
-                            self.fonts["small"]) > text_w:
+                            time_font) > text_w:
                     time_str = clock
                 next_line = f"{sess_label} {time_str}"
             except (ValueError, TypeError):
                 next_line = f"NEXT: {sess_label}"
-            rows.append((self._truncate(draw, next_line, self.fonts["small"], text_w),
-                         self.fonts["small"], (80, 200, 255)))
+            rows.append((self._truncate(draw, next_line, time_font, text_w),
+                         time_font, (80, 200, 255)))
 
         # Rows fill the height; only the narrow layout reserves a bottom strip.
         bottom_reserve = (self._th(draw, "A", self.fonts["detail"]) + 4)             if (cd is not None and not cd_wide) else 0
