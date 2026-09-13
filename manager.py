@@ -1204,16 +1204,28 @@ class F1ScoreboardPlugin(BasePlugin):
             self._offer_alert("%s:%s:%.3f" % (snap.get("session_key") or "live", flag,
                                               time.time()), cards[0])
 
+    # What the test file may ask for (2026-09-13: the user wanted to see a
+    # yellow). An empty file, or anything else, is the red flag as before.
+    # A yellow on this board is the safety car's yellow header: sector yellows
+    # are not shown at all.
+    _ALERT_TEST_FLAGS = {"RED": "RED", "SC": "SC", "YELLOW": "SC", "VSC": "VSC"}
+
     def _maybe_test_alert(self) -> None:
         try:
             if not os.path.exists(self._ALERT_TEST_FILE):
                 return
+            try:
+                with open(self._ALERT_TEST_FILE, encoding="utf-8") as fh:
+                    want = fh.read(16).strip().upper()
+            except (OSError, UnicodeDecodeError):
+                want = ""
             os.remove(self._ALERT_TEST_FILE)
         except OSError:
             return
+        flag = self._ALERT_TEST_FLAGS.get(want, "RED")
         try:
             card = self._scroll_renderer.render_live_header(
-                "ALERT TEST", "RED", session_label="F1 LIVE")
+                "ALERT TEST", flag, session_label="F1 LIVE")
             self._offer_alert("test:%.3f" % time.time(), card)
         except Exception as e:
             self.logger.warning("Test alert failed: %s", e)
