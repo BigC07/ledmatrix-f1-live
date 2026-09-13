@@ -10,6 +10,38 @@ sprint, the calendar and the upcoming-race card -- and is described in
 [README-upstream.md](README-upstream.md). This file covers what the fork adds. Its plugin id is
 `f1-live`, so the plugin store's updates to `f1-scoreboard` never overwrite it.
 
+## On the panel
+
+Drawn with the plugin's own code from the 2026 Spanish Grand Prix, one dot per LED. Each card is
+128 × 32 LEDs, and the scroll carries them across the panels one after another.
+
+**The live board.** The header with the lap and a LIVE chip, then a card per driver: the interval
+to the car ahead, places gained since the start, and a red rail along the top of every live card.
+
+![The live board: SPANISH GP, LAP 57, then Antonelli leading, Verstappen, Norris and Leclerc](docs/images/live-board.png)
+
+**Flags** recolour the live header: as normal, the safety car, the virtual safety car, and a red
+flag.
+
+![The live header as normal, with SAFETY CAR in yellow, VIRTUAL SC in orange, and a RED FLAG badge](docs/images/flags.png)
+
+**The fastest lap** gets a purple stopwatch and its time. Audi's rings and Cadillac's crest are
+drawn for the panel, and a lapped car says so.
+
+![Russell's row with the fastest-lap stopwatch and 1:35.587, Hulkenberg's with the Audi rings, and Bottas lapped, with the Cadillac crest](docs/images/rows.png)
+
+**When the chequered flag falls,** the winner card goes out, four times about a minute apart,
+
+![SPANISH GP WINNER, ANTONELLI, between chequered bands](docs/images/winner.png)
+
+**then the podium** leads the F1 block until the official result is published.
+
+![PODIUM, Spanish GP: Antonelli the winner, Verstappen +4.351, Norris +5.089](docs/images/podium.png)
+
+**Qualifying's result** stays on the ticker until the race starts.
+
+![QUALIFYING - Q3, Spanish GP: Norris 1:31.824, Antonelli +0.011, Verstappen +0.140](docs/images/qualifying-result.png)
+
 ## What it adds
 
 - **A live board.** While a session runs, its order leads the F1 block of the scroll: position,
