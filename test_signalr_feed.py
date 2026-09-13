@@ -581,6 +581,34 @@ def test_qualifying_edges():
     check("practice has no segments: Finished is the end", feed.final_snapshot() is not None)
 
 
+def test_race_gap_interval():
+    """Race rows: the time to the car ahead by default, as on TV (2026-09-13)."""
+    p1 = {"position": 1, "code": "LEC", "gap_to_leader": 0.0, "interval": None, "lap": 30}
+    p2 = {"position": 2, "code": "ANT", "gap_to_leader": 2.0, "interval": 2.0, "lap": 30}
+    p3 = {"position": 3, "code": "VER", "gap_to_leader": 6.0, "interval": 4.0, "lap": 30}
+    lapped = {"position": 15, "code": "STR", "gap_to_leader": "+1 LAP", "interval": None,
+              "lap": 29}
+    out = {"position": 18, "code": "ALB", "gap_to_leader": None, "interval": 3.1, "lap": 9,
+           "retired": True}
+    check("P1 still reads LEADER", live_row_from_entry(p1, 30)["time"] == "LEADER")
+    check("P2: interval and leader gap agree", live_row_from_entry(p2, 30)["time"] == "+2.000")
+    r3 = live_row_from_entry(p3, 30)
+    check("P3 shows its time to P2 (+4.000), as the TV does", r3["time"] == "+4.000", r3)
+    r3l = live_row_from_entry(p3, 30, race_gap="leader")
+    check("race_gap leader: P3 shows its gap to the leader (+6.000)", r3l["time"] == "+6.000", r3l)
+    rl = live_row_from_entry(lapped, 30)
+    check("no numeric interval: the lapped label stays", rl["status"] == "Lapped", rl)
+    ro = live_row_from_entry(out, 30)
+    check("a retired car stays RETIRED whatever its interval", ro["time"] == "RETIRED", ro)
+    timed = {"position": 3, "gap_to_leader": 0.5, "interval": 0.2, "best_lap": "1:31.000"}
+    rt = live_row_from_entry(timed, None, timed=True)
+    check("practice and qualifying unchanged: the gap to the fastest", rt["time"] == "+0.500", rt)
+    snap = race_feed().state()
+    times = [r["time"] for r in (live_row_from_entry(e, snap["lap"]) for e in snap["entries"])]
+    check("the synthetic race board reads the same under intervals",
+          times[:2] == ["LEADER", "+1.234"], times)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

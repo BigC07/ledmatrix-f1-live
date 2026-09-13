@@ -167,7 +167,8 @@ def live_header_title(state: Dict[str, Any], race_name: str = "") -> str:
 
 def live_row_from_entry(entry: Dict[str, Any],
                         leader_lap: Optional[int] = None,
-                        timed: bool = False) -> Dict[str, Any]:
+                        timed: bool = False,
+                        race_gap: str = "interval") -> Dict[str, Any]:
     """Shape a snapshot entry for F1Renderer.render_race_row().
 
     `timed` is practice and qualifying, which run on best laps rather than
@@ -175,6 +176,12 @@ def live_row_from_entry(entry: Dict[str, Any],
     it they are. No LEADER, LAPPED or RETIRED there -- a car in the garage
     for twenty minutes of FP1 is not out of anything, and lap counts differ
     by design, so the lap-deficit test would mark half the field retired.
+
+    In a race, `race_gap` "interval" (the default) shows each car's time to
+    the car ahead, as the TV timing tower does; "leader" shows the gap to the
+    leader. The interval is used only when it is a number: a car whose
+    interval is a label ("1L") keeps the leader-gap reading, which is where
+    LAPPED comes from. Asked for on 2026-09-13, during the Spanish GP.
     """
     if timed:
         gap = entry.get("gap_to_leader")
@@ -186,8 +193,13 @@ def live_row_from_entry(entry: Dict[str, Any],
             time_str = str(gap)
         status = "Finished"
     else:
+        gap = entry.get("gap_to_leader")
+        if race_gap != "leader" and entry.get("position") != 1:
+            interval = entry.get("interval")
+            if isinstance(interval, (int, float)) and not isinstance(interval, bool):
+                gap = interval
         time_str, status = format_gap(
-            entry.get("gap_to_leader"),
+            gap,
             entry.get("position"),
             entry.get("lap"),
             leader_lap,

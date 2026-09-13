@@ -577,12 +577,23 @@
           "title": "Fixture Directory",
           "default": null,
           "description": "Directory of OpenF1 JSON dumps used only when replay_session_key is set. Default on this Pi: /home/admin/f1fixtures."
+        },
+        "race_gap": {
+          "type": "string",
+          "title": "Race Gap",
+          "enum": [
+            "interval",
+            "leader"
+          ],
+          "default": "interval",
+          "description": "What the live race rows show after P1: interval is each car's time to the car ahead, as the TV timing tower shows it; leader is the gap to the leader."
         }
       },
       "x-propertyOrder": [
         "source",
         "session_types",
         "result_sessions",
+        "race_gap",
         "poll_interval",
         "replay_session_key",
         "replay_at",

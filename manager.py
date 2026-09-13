@@ -1252,9 +1252,16 @@ class F1ScoreboardPlugin(BasePlugin):
             if fav:
                 shown.append(fav)
         leader_lap = snap.get("lap")
+        # In a race, the time to the car ahead by default, as on TV (asked for
+        # on 2026-09-13); live.race_gap "leader" puts the gap to the leader back.
+        race_gap = str((self.config.get("live") or {}).get("race_gap")
+                       or "interval").strip().lower()
+        if race_gap not in ("interval", "leader"):
+            race_gap = "interval"
         for entry in shown:
             cards.append(r.render_race_row(
-                live_row_from_entry(entry, leader_lap, timed=timed), live=True))
+                live_row_from_entry(entry, leader_lap, timed=timed, race_gap=race_gap),
+                live=True))
         return cards
 
     # ─── Vegas Mode ────────────────────────────────────────────────────
