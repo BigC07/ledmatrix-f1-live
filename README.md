@@ -66,6 +66,25 @@ jump into the scroll just ahead of the screen (the flag and winner cards, offere
 Without them the plugin still works: flags show on the live header only, the winner card is not
 shown (the podium is), and the live board is as old as the scroll's prefetch.
 
+## How fresh it is
+
+- **Live timing** streams from F1's feed without a break. The plugin reads it every
+  `live.poll_interval` (20 s by default, 10 to 120) and redraws the live cards only when something
+  has changed. With no session live, it checks every 60 s. F1's feed itself runs 2 to 7 s behind
+  F1's own timing screens.
+- **Flags and the winner card** are offered at the next read. With the core change described
+  above, they reach the screen about 20 s after the event. The winner card then goes out three
+  more times, about a minute apart.
+- **Standings, results and the schedule** come from Jolpica and ESPN every `update_interval`: an
+  hour by default, every 10 minutes during a race weekend, and every 5 while a session is live.
+  The podium gives way to the official result at the first refresh after Jolpica publishes it.
+- **On the wall**, the rest is LEDMatrix's Vegas scroll, which fetches a plugin's cards shortly
+  before they scroll on. With `plugins_per_cycle: 1`, cards are about 40 s old when they pass, and
+  a change that comes while other plugins are on screen waits for F1's next turn. A long live board
+  crosses the screen over a minute or more. Without the core change that repaints cards already in
+  the scroll, the 2026 Spanish GP's live board ran about a lap behind the TV broadcast on a 256×32
+  wall; with it, its rows were 10 to 45 s old.
+
 ## Where the data comes from
 
 - **F1 live timing** (`livetiming.formula1.com`), the feed behind F1's own live timing, also used
