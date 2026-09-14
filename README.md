@@ -1,6 +1,6 @@
 # F1 Live
 
-**Version 1.2.0** (2026-09-13) · by [BigC07](https://github.com/BigC07)
+**Version 1.2.1** (2026-09-13) · by [BigC07](https://github.com/BigC07)
 
 A Formula 1 plugin for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix) with **live timing
 from F1's own feed**: the running order during races, qualifying and practice, flags as they
@@ -22,10 +22,10 @@ to the car ahead, places gained since the start, and a red rail along the top of
 
 ![The live board: SPANISH GP, LAP 57, then Antonelli leading, Verstappen, Norris and Leclerc](docs/images/live-board.png)
 
-**Flags** recolour the live header: as normal, the safety car, the virtual safety car, and a red
-flag.
+**Flags** get a badge on the live header, which keeps its colours: as normal, the safety car,
+the virtual safety car, and a red flag.
 
-![The live header as normal, with SAFETY CAR in yellow, VIRTUAL SC in orange, and a RED FLAG badge](docs/images/flags.png)
+![The live header as normal, then with a yellow SAFETY CAR badge, a darker yellow VIRTUAL SC badge, and a red RED FLAG badge](docs/images/flags.png)
 
 **The fastest lap** gets a purple stopwatch and its time. Audi's rings and Cadillac's crest are
 drawn for the panel, and a lapped car says so.
@@ -51,7 +51,8 @@ drawn for the panel, and a lapped car says so.
   to the leader). Lapped and retired cars are labelled, places gained are shown, and a red rail
   along the top marks every live card. Practice and qualifying show the time to beat and each
   driver's gap to it.
-- **Flags.** A RED FLAG badge, SAFETY CAR in yellow and VIRTUAL SC in orange on the live header.
+- **Flags.** A badge on the live header: SAFETY CAR in yellow, VIRTUAL SC in a darker yellow,
+  RED FLAG in red.
 - **Fastest lap.** A purple stopwatch and the lap time on the holder's row.
 - **Results between sessions.** A finished practice or qualifying stays at the front, drawn like
   the Q3 cards, until the next session goes live. Qualifying goes when its race starts.
@@ -140,6 +141,9 @@ printf WINNER > ~/LEDMatrix/plugin-repos/f1-live/alert-test
 ```
 
 ## Versions
+
+**1.2.1** (2026-09-13): the safety car and the virtual safety car get a badge like the red
+flag's, in yellow and a darker yellow, and the live header keeps its colours.
 
 **1.2.0** (2026-09-13): ready for the plugin store's review. The display modes are
 `f1_live_*`, so they no longer collide with F1 Scoreboard's when both are installed; an

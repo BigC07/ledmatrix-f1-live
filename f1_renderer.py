@@ -123,6 +123,10 @@ _LIVE_RAIL = (255, 40, 40)
 # Brighter than F1 red and a solid block, so it is the one thing on the card
 # that reads as an alarm.
 _RED_FLAG_BADGE = (230, 0, 0)
+# f1-live: the safety car's badge, and the VSC's in a darker yellow, both with
+# dark letters (asked for on 2026-09-13, like the red flag's).
+_SAFETY_CAR_BADGE = (255, 220, 0)
+_VSC_BADGE = (235, 185, 0)
 
 
 class F1Renderer:
@@ -1004,38 +1008,31 @@ class F1Renderer:
                            lap: Optional[int] = None,
                            session_label: Optional[str] = None) -> Image.Image:
         """f1-live: live_race header. Same furniture as the finished-race
-        name card. SC and VSC recolour the card and name themselves on the
-        second line. A red flag keeps the usual colours and gets a solid red
-        badge at the end of that line instead (design B, chosen 2026-09-12):
-        the card is red already, so recolouring it -- the first version --
-        barely showed.
+        name card. A flag keeps the usual colours and gets a solid badge at
+        the end of the second line. The red flag came first (design B, chosen
+        2026-09-12): the card is red already, so recolouring it -- the first
+        version -- barely showed. The safety car and the VSC recoloured the
+        card until 2026-09-13, when they were asked for as badges too:
+        SAFETY CAR in yellow, VIRTUAL SC in a darker yellow.
         """
-        color = F1_RED
-        bar = (40, 0, 0)
-        chip = (flag or "").upper()
-        status = ""
-        badge = None
-        if chip == "SC":
-            color, bar, status = (255, 220, 0), (40, 30, 0), "SAFETY CAR"
-        elif chip == "VSC":
-            color, bar, status = (255, 160, 0), (40, 20, 0), "VIRTUAL SC"
-        elif chip == "RED":
-            badge = ("RED FLAG", _RED_FLAG_BADGE, (255, 255, 255))
+        badge = {
+            # (text, fill, text colour[, short text for a crowded line])
+            "SC": ("SAFETY CAR", _SAFETY_CAR_BADGE, (0, 0, 0), "SC"),
+            "VSC": ("VIRTUAL SC", _VSC_BADGE, (0, 0, 0), "VSC"),
+            "RED": ("RED FLAG", _RED_FLAG_BADGE, (255, 255, 255)),
+        }.get((flag or "").upper())
 
-        # The lap count and any flag go on the second line, which this card
-        # already has and was not using. Cramming them into the title made it
-        # 133px against 124 available before the LIVE chip was even drawn, so
-        # the chip landed on top of a truncated "ITALIAN GP · S".
-        sub_bits = []
+        # The lap count and the flag's badge go on the second line, which
+        # this card already has and was not using. Cramming them into the
+        # title made it 133px against 124 available before the LIVE chip was
+        # even drawn, so the chip landed on top of a truncated "ITALIAN GP · S".
+        subtitle = ""
         if lap:
-            sub_bits.append("LAP %s" % lap)
+            subtitle = "LAP %s" % lap
         elif session_label:
             # Practice and qualifying have no lap counter, and the title is
             # the Grand Prix -- this is what says which session is on.
-            sub_bits.append(session_label.upper())
-        if status:
-            sub_bits.append(status)
-        subtitle = "  ".join(sub_bits)
+            subtitle = session_label.upper()
         if badge and not subtitle:
             subtitle = " "      # keep the two-line layout: the badge needs its line
 
@@ -1043,7 +1040,7 @@ class F1Renderer:
         probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
         chip_font = self.fonts["position"]
         chip_w = self._tw(probe, "LIVE", chip_font) + 5
-        img = self._render_session_header(title, subtitle, color, bar,
+        img = self._render_session_header(title, subtitle, F1_RED, (40, 0, 0),
                                           reserve_right=chip_w, badge=badge)
         draw = ImageDraw.Draw(img)
         draw.fontmode = "1"
@@ -1934,15 +1931,17 @@ class F1Renderer:
     def _render_session_header(self, title: str, subtitle: str,
                                title_color: tuple, bar_color: tuple,
                                reserve_right: int = 0,
-                               badge: Optional[Tuple[str, tuple, tuple]] = None) -> Image.Image:
+                               badge: Optional[Tuple] = None) -> Image.Image:
         """Shared layout for the qualifying/practice/sprint intro headers:
         colored top bar + F1 logo + title (+ optional subtitle). On tall panels
         the content group is vertically centered and the bar grows to contain it
         so the header fills the height instead of clustering at the top.
 
-        f1-live: ``badge`` -- (text, fill, text colour) -- is drawn as a solid
-        block at the right end of the subtitle line, and the subtitle is cut
-        short of it (the red flag on the live header, 2026-09-12)."""
+        f1-live: ``badge`` -- (text, fill, text colour[, short text]) -- is
+        drawn as a solid block at the right end of the subtitle line, and the
+        subtitle is cut short of it: the flags on the live header (the red
+        flag 2026-09-12, the safety car and VSC 2026-09-13). The short text,
+        if given, replaces the full one where that would cut the subtitle."""
         img = Image.new("RGBA", (self.display_width, self.display_height), (0, 0, 0, 255))
         draw = ImageDraw.Draw(img)
         # Disable anti-aliasing: pixel/bitmap fonts (e.g. PressStart2P) get
@@ -2014,8 +2013,16 @@ class F1Renderer:
             room = self.display_width - 4
             if badge:
                 # Leave the badge its width plus a gap, so a long session name
-                # is cut short of it rather than disappearing under it.
-                room -= self._tw(draw, badge[0], sub_font) + 8
+                # is cut short of it rather than disappearing under it. Its
+                # short text, if it has one, where the full one would cut the
+                # line: VSC beside PRACTICE 3, or SC beside the lap on a 64px
+                # card.
+                text = badge[0]
+                if len(badge) > 3 and (self._tw(draw, subtitle, sub_font)
+                                       > room - self._tw(draw, text, sub_font) - 8):
+                    text = badge[3]
+                badge = (text,) + tuple(badge[1:3])
+                room -= self._tw(draw, text, sub_font) + 8
             sub = self._truncate(draw, subtitle, sub_font, room)
             if ry + 5 < self.display_height:
                 self._draw_text_outlined(draw, (2, ry), sub, sub_font,
@@ -2026,7 +2033,8 @@ class F1Renderer:
 
     def _draw_badge(self, draw: ImageDraw.ImageDraw, y: int, badge, font) -> None:
         """f1-live: a solid block with text, right-aligned on the line at y --
-        the red flag's badge on the live header (design B, 2026-09-12)."""
+        a flag's badge on the live header (design B: the red flag 2026-09-12,
+        the safety car and VSC 2026-09-13)."""
         text, fill, text_fill = badge
         x = self.display_width - self._tw(draw, text, font) - 4
         box = draw.textbbox((x, y), text, font=font)

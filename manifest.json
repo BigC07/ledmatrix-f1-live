@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.2.1",
+      "released": "2026-09-13",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "The safety car and the virtual safety car are drawn like the red flag: the live header keeps its usual colours, and a solid badge at the end of its second line reads SAFETY CAR in yellow or VIRTUAL SC in a darker yellow. Where the full words would cut the line, such as beside a practice session's name, the badge reads SC or VSC."
+    },
     {
       "version": "1.2.0",
       "released": "2026-09-13",
