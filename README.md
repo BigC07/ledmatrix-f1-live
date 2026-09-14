@@ -106,18 +106,10 @@ install already has.
 | `live.replay_session_key`, `live.replay_at`, `live.fixture_dir` | `null` | Replay a finished OpenF1 session, to test the live cards without a Grand Prix |
 | `vegas.sections` | `["upcoming", "last_race"]` | Which sections join the Vegas scroll, in this order. A live session, a kept result and a podium lead them by themselves |
 
-## Tests
+## Testing
 
-The tests import the LEDMatrix core, so run them on a LEDMatrix install, from its directory:
-
-```bash
-cd ~/LEDMatrix && python3 plugin-repos/f1-live/test_signalr_feed.py
-```
-
-Most expect LEDMatrix at `/home/admin/LEDMatrix` and the plugin in its `plugin-repos/f1-live`;
-several take `F1_LIVE_PLUGIN` for a copy elsewhere. `fixtures/` holds messages recorded from F1's
-feed (2026 Spanish GP practice), so the feed's tests run offline. `test_manifest.py` checks the
-manifest and the example config the way the plugin store's review does, and needs neither.
+Each release is checked with the author's own test suite, kept outside this repository, and with
+LEDMatrix's safety harness, which draws every screen at 64×32, 128×32, 128×64 and 256×32.
 
 To see an alert card without a race (with the core change described above), create a file named
 `alert-test` in the plugin's folder. It is picked up within about 20 seconds and removed. Empty,
