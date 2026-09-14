@@ -1,5 +1,7 @@
 # F1 Live
 
+**Version 1.1.0** (2026-09-13) · by [BigC07](https://github.com/BigC07)
+
 A Formula 1 plugin for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix) with **live timing
 from F1's own feed**: the running order during races, qualifying and practice, flags as they
 happen, and the winner and the podium when the chequered flag falls.
@@ -107,6 +109,13 @@ cd ~/LEDMatrix && python3 plugin-repos/f1-live/test_signalr_feed.py
 Most expect LEDMatrix at `/home/admin/LEDMatrix` and the plugin in its `plugin-repos/f1-live`;
 several take `F1_LIVE_PLUGIN` for a copy elsewhere. `fixtures/` holds messages recorded from F1's
 feed (2026 Spanish GP practice), so the feed's tests run offline.
+
+## Versions
+
+**1.1.0** (2026-09-13): the first release under its own name and repository. It carries
+everything the fork has added to F1 Scoreboard 1.8.6 since 2026-09-07, as listed above: live
+timing from F1's own feed, the flags, the fastest lap, results between sessions, the winner card
+and the podium, and the readability work.
 
 ## Credits and licence
 
