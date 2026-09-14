@@ -1,6 +1,6 @@
 # F1 Live
 
-**Version 1.1.0** (2026-09-13) · by [BigC07](https://github.com/BigC07)
+**Version 1.2.0** (2026-09-13) · by [BigC07](https://github.com/BigC07)
 
 A Formula 1 plugin for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix) with **live timing
 from F1's own feed**: the running order during races, qualifying and practice, flags as they
@@ -78,13 +78,20 @@ shown (the podium is), and the live board is as old as the scroll's prefetch.
 
 ## Install
 
-1. Put this repository in LEDMatrix's plugin directory as `f1-live`, for example
-   `git clone <this repository's URL> ~/LEDMatrix/plugin-repos/f1-live`.
-2. Restart the display: `sudo systemctl restart ledmatrix.service`.
-3. Enable **F1 Live** in the web UI, and disable **F1 Scoreboard** if the store installed it: the
-   two draw the same sections.
+Install it from its URL, `https://github.com/BigC07/ledmatrix-f1-live`, in the LEDMatrix web UI's
+plugin manager, or from the Pi:
 
-It needs `requests`, `Pillow` and `pytz` (`requirements.txt`), all present on a LEDMatrix install.
+```bash
+curl -X POST http://localhost:5000/api/v3/plugins/install-from-url \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/BigC07/ledmatrix-f1-live"}'
+```
+
+Then enable **F1 Live**, and disable **F1 Scoreboard** if it is installed: the two draw the same
+sections. The settings are in the web UI; [example_config.json](example_config.json) shows the
+main ones as they sit in `config.json`. The plugin's Update button pulls the latest version from
+this repository. It needs `requests`, `Pillow` and `pytz` (`requirements.txt`), which a LEDMatrix
+install already has.
 
 ## Settings the fork adds
 
@@ -94,6 +101,7 @@ It needs `requests`, `Pillow` and `pytz` (`requirements.txt`), all present on a 
 | `live.session_types` | `["Race"]` | Which live sessions get a live board: `"Race"` (the Grand Prix and the sprint), `"Qualifying"`, `"Practice"` |
 | `live.result_sessions` | `["Practice", "Qualifying"]` | Finished sessions kept on the ticker until the next one goes live; `[]` turns it off |
 | `live.race_gap` | `"interval"` | Race rows after P1: `"interval"` to the car ahead, or `"leader"` |
+| `live.cars` | `10` | How many cars the live board shows, from the front: `22` is the whole 2026 field. The favourite driver is added when outside them |
 | `live.poll_interval` | `20` | Seconds between live snapshots |
 | `live.replay_session_key`, `live.replay_at`, `live.fixture_dir` | `null` | Replay a finished OpenF1 session, to test the live cards without a Grand Prix |
 | `vegas.sections` | `["upcoming", "last_race"]` | Which sections join the Vegas scroll, in this order. A live session, a kept result and a podium lead them by themselves |
@@ -108,9 +116,24 @@ cd ~/LEDMatrix && python3 plugin-repos/f1-live/test_signalr_feed.py
 
 Most expect LEDMatrix at `/home/admin/LEDMatrix` and the plugin in its `plugin-repos/f1-live`;
 several take `F1_LIVE_PLUGIN` for a copy elsewhere. `fixtures/` holds messages recorded from F1's
-feed (2026 Spanish GP practice), so the feed's tests run offline.
+feed (2026 Spanish GP practice), so the feed's tests run offline. `test_manifest.py` checks the
+manifest and the example config the way the plugin store's review does, and needs neither.
+
+To see an alert card without a race (with the core change described above), create a file named
+`alert-test` in the plugin's folder. It is picked up within about 20 seconds and removed. Empty,
+it gives the red flag; `SC`, `VSC` or `WINNER` in it gives the safety car, the virtual safety car
+or the winner card:
+
+```bash
+printf WINNER > ~/LEDMatrix/plugin-repos/f1-live/alert-test
+```
 
 ## Versions
+
+**1.2.0** (2026-09-13): ready for the plugin store's review. The display modes are
+`f1_live_*`, so they no longer collide with F1 Scoreboard's when both are installed; an
+`example_config.json`; the alert test file sits in the plugin's own folder; installing from the
+repository's URL; and `live.cars`, how many cars the live board shows, up to the whole field.
 
 **1.1.0** (2026-09-13): the first release under its own name and repository. It carries
 everything the fork has added to F1 Scoreboard 1.8.6 since 2026-09-07, as listed above: live

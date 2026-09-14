@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -19,16 +19,22 @@
     "scoreboard"
   ],
   "display_modes": [
-    "f1_driver_standings",
-    "f1_constructor_standings",
-    "f1_recent_races",
-    "f1_upcoming",
-    "f1_qualifying",
-    "f1_practice",
-    "f1_sprint",
-    "f1_calendar"
+    "f1_live_driver_standings",
+    "f1_live_constructor_standings",
+    "f1_live_recent_races",
+    "f1_live_upcoming",
+    "f1_live_qualifying",
+    "f1_live_practice",
+    "f1_live_sprint",
+    "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.2.0",
+      "released": "2026-09-13",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "Ready for the plugin store's review. The display modes are renamed f1_live_* (f1_live_upcoming, f1_live_qualifying and the rest), so they no longer collide with F1 Scoreboard's f1_* modes when both plugins are installed. Adds example_config.json. The alert test file is now alert-test in the plugin's own directory instead of a fixed path in LEDMatrix's cache directory. The README installs from the repository's URL. A new live.cars setting sets how many cars the live board shows: 10 by default, up to the whole field."
+    },
     {
       "version": "1.1.0",
       "released": "2026-09-13",

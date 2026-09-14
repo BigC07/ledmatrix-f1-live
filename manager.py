@@ -527,21 +527,21 @@ class F1ScoreboardPlugin(BasePlugin):
         """Build list of enabled display modes from config."""
         modes = []
         mode_configs = {
-            "f1_driver_standings": self.config.get(
+            "f1_live_driver_standings": self.config.get(
                 "driver_standings", {}).get("enabled", True),
-            "f1_constructor_standings": self.config.get(
+            "f1_live_constructor_standings": self.config.get(
                 "constructor_standings", {}).get("enabled", True),
-            "f1_recent_races": self.config.get(
+            "f1_live_recent_races": self.config.get(
                 "recent_races", {}).get("enabled", True),
-            "f1_upcoming": self.config.get(
+            "f1_live_upcoming": self.config.get(
                 "upcoming", {}).get("enabled", True),
-            "f1_qualifying": self.config.get(
+            "f1_live_qualifying": self.config.get(
                 "qualifying", {}).get("enabled", True),
-            "f1_practice": self.config.get(
+            "f1_live_practice": self.config.get(
                 "practice", {}).get("enabled", True),
-            "f1_sprint": self.config.get(
+            "f1_live_sprint": self.config.get(
                 "sprint", {}).get("enabled", True),
-            "f1_calendar": self.config.get(
+            "f1_live_calendar": self.config.get(
                 "calendar", {}).get("enabled", True),
         }
 
@@ -622,7 +622,7 @@ class F1ScoreboardPlugin(BasePlugin):
     def _update_standings(self):
         """Update driver and constructor standings."""
         # Driver standings
-        if "f1_driver_standings" in self.modes:
+        if "f1_live_driver_standings" in self.modes:
             standings = self.data_source.fetch_driver_standings()
             if standings:
                 # Calculate poles
@@ -658,7 +658,7 @@ class F1ScoreboardPlugin(BasePlugin):
                     always_show_favorite=always_show)
 
         # Constructor standings
-        if "f1_constructor_standings" in self.modes:
+        if "f1_live_constructor_standings" in self.modes:
             standings = self.data_source.fetch_constructor_standings()
             if standings:
                 # Annotate with championship gap data
@@ -686,7 +686,7 @@ class F1ScoreboardPlugin(BasePlugin):
 
     def _update_recent_races(self):
         """Update recent race results."""
-        if "f1_recent_races" not in self.modes:
+        if "f1_live_recent_races" not in self.modes:
             return
 
         count = self.config.get("recent_races", {}).get("number_of_races", 3)
@@ -715,7 +715,7 @@ class F1ScoreboardPlugin(BasePlugin):
 
     def _update_upcoming(self):
         """Update upcoming race data."""
-        if "f1_upcoming" not in self.modes:
+        if "f1_live_upcoming" not in self.modes:
             return
 
         upcoming = self.data_source.get_upcoming_race()
@@ -733,7 +733,7 @@ class F1ScoreboardPlugin(BasePlugin):
 
     def _update_qualifying(self):
         """Update qualifying results."""
-        if "f1_qualifying" not in self.modes:
+        if "f1_live_qualifying" not in self.modes:
             return
 
         qualifying = self.data_source.fetch_qualifying()
@@ -742,7 +742,7 @@ class F1ScoreboardPlugin(BasePlugin):
 
     def _update_practice(self):
         """Update free practice results."""
-        if "f1_practice" not in self.modes:
+        if "f1_live_practice" not in self.modes:
             return
 
         sessions = self.config.get(
@@ -770,7 +770,7 @@ class F1ScoreboardPlugin(BasePlugin):
 
     def _update_sprint(self):
         """Update sprint race results."""
-        if "f1_sprint" not in self.modes:
+        if "f1_live_sprint" not in self.modes:
             return
 
         sprint = self.data_source.fetch_sprint_results()
@@ -784,7 +784,7 @@ class F1ScoreboardPlugin(BasePlugin):
 
     def _update_calendar(self):
         """Update race calendar."""
-        if "f1_calendar" not in self.modes:
+        if "f1_live_calendar" not in self.modes:
             return
 
         cal_config = self.config.get("calendar", {})
@@ -1187,19 +1187,19 @@ class F1ScoreboardPlugin(BasePlugin):
             return False
 
         if display_mode is None:
-            display_mode = self.modes[0] if self.modes else "f1_driver_standings"
+            display_mode = self.modes[0] if self.modes else "f1_live_driver_standings"
 
         self._current_display_mode = display_mode
 
-        if display_mode == "f1_upcoming":
+        if display_mode == "f1_live_upcoming":
             return self._display_upcoming(force_clear)
-        elif display_mode in ("f1_driver_standings",
-                               "f1_constructor_standings",
-                               "f1_recent_races",
-                               "f1_qualifying",
-                               "f1_practice",
-                               "f1_sprint",
-                               "f1_calendar"):
+        elif display_mode in ("f1_live_driver_standings",
+                               "f1_live_constructor_standings",
+                               "f1_live_recent_races",
+                               "f1_live_qualifying",
+                               "f1_live_practice",
+                               "f1_live_sprint",
+                               "f1_live_calendar"):
             return self._display_scroll_mode(display_mode, force_clear)
         else:
             self.logger.warning("Unknown display mode: %s", display_mode)
@@ -1351,10 +1351,12 @@ class F1ScoreboardPlugin(BasePlugin):
 
     _ALERT_FLAGS = ("RED", "SC", "VSC")
     _ALERT_TTL_S = 60
-    # Create this file (any user in the ledmatrix group can) to have one test
-    # alert offered on the next update; it is removed when used. In the cache
-    # dir because the service's /tmp may be private to it.
-    _ALERT_TEST_FILE = "/var/cache/ledmatrix/f1-live-alert-test"
+    # Create this file to have one test alert offered on the next update; it is
+    # removed when used. It sits in the plugin's own directory, the one place a
+    # plugin may write (the plugin store's rule, 2026-09-13), rather than /tmp,
+    # which may be private to the service. Its first word picks the card: see
+    # _ALERT_TEST_FLAGS and _maybe_test_alert().
+    _ALERT_TEST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alert-test")
 
     def get_vegas_alert(self):
         """(alert_id, card) while an alert is fresh, else None. Called on the
@@ -1435,10 +1437,11 @@ class F1ScoreboardPlugin(BasePlugin):
         cards = [r.render_live_header(
             title, snap.get("flag"), snap.get("lap"),
             session_label=snap.get("session_name") if timed else None)]
-        top_n = 10
+        # How many cars: live.cars, 10 by default (asked for on 2026-09-13:
+        # "make it an option to show all twenty-two cars"). It used to be
+        # recent_races.top_finishers, the finished-race grid's own setting.
         try:
-            top_n = int((self.config.get("recent_races") or {}).get(
-                "top_finishers") or 10)
+            top_n = max(1, int((self.config.get("live") or {}).get("cars") or 10))
         except (TypeError, ValueError):
             top_n = 10
         entries = snap.get("entries") or []
@@ -1779,19 +1782,19 @@ class F1ScoreboardPlugin(BasePlugin):
     # ─── Dynamic Duration ──────────────────────────────────────────────
 
     _SCROLL_MODES = frozenset({
-        "f1_driver_standings", "f1_constructor_standings",
-        "f1_recent_races", "f1_qualifying", "f1_practice",
-        "f1_sprint", "f1_calendar",
+        "f1_live_driver_standings", "f1_live_constructor_standings",
+        "f1_live_recent_races", "f1_live_qualifying", "f1_live_practice",
+        "f1_live_sprint", "f1_live_calendar",
     })
 
     _MODE_KEY_MAP = {
-        "f1_driver_standings": "driver_standings",
-        "f1_constructor_standings": "constructor_standings",
-        "f1_recent_races": "recent_races",
-        "f1_qualifying": "qualifying",
-        "f1_practice": "practice",
-        "f1_sprint": "sprint",
-        "f1_calendar": "calendar",
+        "f1_live_driver_standings": "driver_standings",
+        "f1_live_constructor_standings": "constructor_standings",
+        "f1_live_recent_races": "recent_races",
+        "f1_live_qualifying": "qualifying",
+        "f1_live_practice": "practice",
+        "f1_live_sprint": "sprint",
+        "f1_live_calendar": "calendar",
     }
 
     def supports_dynamic_duration(self) -> bool:

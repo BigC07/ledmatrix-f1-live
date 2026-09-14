@@ -1,0 +1,34 @@
+{
+  "_comment": "Add this to your config/config.json to enable F1 Live; every setting is also in the web UI. The live block is what F1 Live adds; the rest are F1 Scoreboard's settings.",
+  "f1-live": {
+    "enabled": true,
+    "favorite_driver": "VER",
+    "favorite_team": "red_bull",
+    "live": {
+      "source": "f1",
+      "session_types": ["Race", "Qualifying", "Practice"],
+      "result_sessions": ["Practice", "Qualifying"],
+      "race_gap": "interval",
+      "cars": 10,
+      "poll_interval": 20
+    },
+    "vegas": {
+      "sections": ["upcoming", "qualifying", "last_race"]
+    },
+    "upcoming": {
+      "enabled": true,
+      "show_session_times": true
+    },
+    "qualifying": {
+      "enabled": true,
+      "show_q3": true,
+      "show_q2": false,
+      "show_q1": false
+    },
+    "recent_races": {
+      "enabled": true,
+      "number_of_races": 1,
+      "top_finishers": 10
+    }
+  }
+}

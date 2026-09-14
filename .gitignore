@@ -3,3 +3,4 @@ __pycache__/
 *.orig-*
 .DS_Store
 Thumbs.db
+alert-test
