@@ -684,6 +684,39 @@ class F1ScoreboardPlugin(BasePlugin):
                         driver_key="constructor_id",
                         team_key="constructor_id"))
 
+    # f1-live: one race stays on the wall until the next one, so the ten-row
+    # result is still scrolling days after anybody wants to read it. Once a
+    # race is `recent_races.podium_only_after_days` old the block drops to the
+    # podium and nothing else. 0 keeps the full result all week.
+    _PODIUM_DEPTH = 3
+
+    def _race_start(self, race: Dict) -> Optional[datetime]:
+        """The race's scheduled start, UTC, or None if the date is unusable."""
+        date = (race or {}).get("date") or ""
+        clock = ((race or {}).get("time") or "").rstrip("Z")
+        for text, fmt in (("%s %s" % (date, clock), "%Y-%m-%d %H:%M:%S"),
+                          (date, "%Y-%m-%d")):
+            try:
+                return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        return None
+
+    def _podium_only(self, race: Dict) -> bool:
+        """True once this race is old enough to show only its top three."""
+        try:
+            days = float(self.config.get("recent_races", {})
+                         .get("podium_only_after_days", 0) or 0)
+        except (TypeError, ValueError):
+            return False
+        if days <= 0:
+            return False
+        start = self._race_start(race)
+        if start is None:
+            return False
+        age = (datetime.now(timezone.utc) - start).total_seconds()
+        return age > days * 86400
+
     def _update_recent_races(self):
         """Update recent race results."""
         if "f1_live_recent_races" not in self.modes:
@@ -705,10 +738,15 @@ class F1ScoreboardPlugin(BasePlugin):
                 results = race.get("results", [])
                 # Preserve full results for the points haul card
                 race_copy["all_results"] = results
+                depth, keep_favorite = top_finishers, always_show
+                if self._podium_only(race):
+                    # The podium is the podium: no favourite driver tacked on
+                    # a fourth row once the result has gone stale.
+                    depth, keep_favorite = self._PODIUM_DEPTH, False
                 race_copy["results"] = self.data_source.apply_favorite_filter(
-                    results, top_finishers,
+                    results, depth,
                     favorite_driver=self.favorite_driver,
-                    always_show_favorite=always_show)
+                    always_show_favorite=keep_favorite)
                 filtered_races.append(race_copy)
 
             self._recent_races = filtered_races

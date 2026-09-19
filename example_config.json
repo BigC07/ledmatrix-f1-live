@@ -28,7 +28,8 @@
     "recent_races": {
       "enabled": true,
       "number_of_races": 1,
-      "top_finishers": 10
+      "top_finishers": 10,
+      "podium_only_after_days": 2
     }
   }
 }

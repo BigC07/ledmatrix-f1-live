@@ -124,6 +124,7 @@ install already has.
 | `live.cars` | `10` | How many cars the live board shows, from the front: `22` is the whole 2026 field. The favourite driver is added when outside them |
 | `live.poll_interval` | `20` | Seconds between live snapshots |
 | `live.replay_session_key`, `live.replay_at`, `live.fixture_dir` | `null` | Replay a finished OpenF1 session, to test the live cards without a Grand Prix |
+| `recent_races.podium_only_after_days` | `0` | Days after a race before its result drops to the podium: the top three, with no favourite driver appended. `0` keeps `recent_races.top_finishers` rows until the next race |
 | `vegas.sections` | `["upcoming", "last_race"]` | Which sections join the Vegas scroll, in this order. A live session, a kept result and a podium lead them by themselves |
 
 ## Testing
@@ -141,6 +142,8 @@ printf WINNER > ~/LEDMatrix/plugin-repos/f1-live/alert-test
 ```
 
 ## Versions
+
+**1.3.0** (2026-09-19): a race result can be given a shelf life. `recent_races.podium_only_after_days` keeps the full result for that many days after the race and then shows only the podium, so the last Grand Prix is not still scrolling ten rows a week later. `0`, the default, leaves it as it was.
 
 **1.2.1** (2026-09-13): the safety car and the virtual safety car get a badge like the red
 flag's, in yellow and a darker yellow, and the live header keeps its colours.

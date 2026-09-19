@@ -152,6 +152,15 @@
           "maximum": 20,
           "description": "Number of top finishers to display per race"
         },
+        "podium_only_after_days": {
+          "x-advanced": true,
+          "type": "integer",
+          "title": "Podium Only After (days)",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 14,
+          "description": "Once a race is this many days old, show only the podium (top 3) instead of Top Finishers. The favorite driver is not added back. 0 keeps the full result until the next race"
+        },
         "always_show_favorite": {
           "x-advanced": true,
           "type": "boolean",
@@ -217,6 +226,7 @@
         "enabled",
         "number_of_races",
         "top_finishers",
+        "podium_only_after_days",
         "always_show_favorite",
         "show_position_delta",
         "show_dnf_status",
