@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -30,6 +30,12 @@
   ],
   "versions": [
     {
+      "version": "1.3.1",
+      "released": "2026-09-20",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "Documentation only: the plugin draws exactly what 1.3.0 draws. Adds CHANGELOG.md, every release of the fork in one file, and fixes the README, whose version line still said 1.2.1 two releases later."
+    },
+    {
       "version": "1.3.0",
       "released": "2026-09-19",
       "ledmatrix_min_version": "2.0.0",
@@ -54,7 +60,7 @@
       "notes": "The first release under its own name and repository, by BigC07: a fork of ChuckBuilds' F1 Scoreboard 1.8.6, maintained since 2026-09-07. Live timing from F1's own feed: live boards for the race, qualifying and practice, with the interval to the car ahead, places gained, and lapped and retired cars; red flag, safety car and virtual safety car on the live header; a purple stopwatch and the lap time for the fastest lap. After a race, a chequered winner card and the podium until the official result is published. A finished practice or qualifying stays on the ticker until the next session, and qualifying leaves when its race starts. Race rows with the full surname, 5x8 times, cleaner team logos, and drawn logos for Cadillac and Audi. Cards jumping into the scroll (the flag and winner cards) and cards repainted while they scroll need two small LEDMatrix core patches; without them the rest works."
     }
   ],
-  "last_updated": "2026-09-19",
+  "last_updated": "2026-09-20",
   "stars": 0,
   "downloads": 0,
   "verified": false,

@@ -1,6 +1,6 @@
 # F1 Live
 
-**Version 1.2.1** (2026-09-13) · by [BigC07](https://github.com/BigC07)
+**Version 1.3.1** (2026-09-20) · by [BigC07](https://github.com/BigC07) · [Changelog](CHANGELOG.md)
 
 A Formula 1 plugin for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix) with **live timing
 from F1's own feed**: the running order during races, qualifying and practice, flags as they
@@ -142,6 +142,10 @@ printf WINNER > ~/LEDMatrix/plugin-repos/f1-live/alert-test
 ```
 
 ## Versions
+
+The short list. [CHANGELOG.md](CHANGELOG.md) has every release in full.
+
+**1.3.1** (2026-09-20): documentation only -- a changelog, and a README whose version line no longer lags two releases behind.
 
 **1.3.0** (2026-09-19): a race result can be given a shelf life. `recent_races.podium_only_after_days` keeps the full result for that many days after the race and then shows only the podium, so the last Grand Prix is not still scrolling ten rows a week later. `0`, the default, leaves it as it was.
 
