@@ -1817,6 +1817,49 @@ class F1ScoreboardPlugin(BasePlugin):
         """Return SCROLL for continuous scrolling."""
         return VegasDisplayMode.SCROLL
 
+    # f1-live: solo_wall -- the fork may ask the core for the whole strip while
+    # a session is running, so a race is not interleaved with football, the
+    # clock and the weather. The core side is the wall's own
+    # patch_core_vegas_solo.py; a core without it never asks, the method is
+    # simply never called, and the wall keeps rotating as before.
+    #
+    # Create this file to claim the wall on the next refresh whatever the feed
+    # is doing, and remove it to give the wall back: the only way to exercise
+    # the path without waiting for a Grand Prix. It sits in the plugin's own
+    # directory, like alert-test, that being the one place a plugin may write
+    # (the plugin store's rule, 2026-09-13).
+    _SOLO_TEST_FILE = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "solo-test")
+    _SOLO_DEFAULT_SESSIONS = ("race",)
+
+    def get_vegas_solo(self) -> Optional[str]:
+        """Why this plugin should have the wall to itself now, or None.
+
+        Polled by the core's plugin-list refresh, every 30 s, never on the
+        render path. Keyed to the live cards rather than to the feed's own
+        liveness, so the claim cannot outlive the board it exists for: when
+        the cards go -- on the 300 s hold after the flag -- the wall goes
+        back by itself, with nothing to remember and nothing to undo.
+        """
+        try:
+            if os.path.exists(self._SOLO_TEST_FILE):
+                return "solo-test file"
+        except OSError:
+            pass
+        cfg = ((self.config or {}).get("live") or {}).get("solo_wall") or {}
+        if not cfg.get("enabled") or not self._vegas_live_race_cards:
+            return None
+        wanted = cfg.get("session_types") or self._SOLO_DEFAULT_SESSIONS
+        try:
+            wanted = {str(s).strip().lower() for s in wanted if str(s).strip()}
+        except TypeError:
+            return None         # a scalar where a list belongs: claim nothing
+        snap = self._live_snapshot or {}
+        stype = str(snap.get("session_type") or "").strip().lower()
+        if not stype or stype not in wanted:
+            return None
+        return "%s is live" % (snap.get("session_name") or snap.get("session_type"))
+
     # ─── Dynamic Duration ──────────────────────────────────────────────
 
     _SCROLL_MODES = frozenset({

@@ -7,6 +7,19 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.4.0] - 2026-09-25
+
+### Added
+- `live.solo_wall`: while a live session is running, the plugin can take the whole display
+  instead of its turn in the rotation -- a race ticker rather than a race card between the
+  football and the clock. `enabled` is off by default; `session_types` picks which sessions
+  take the wall, the race alone by default.
+- The claim is tied to the live cards, not to the feed's own liveness, so it cannot outlive the
+  board it exists for: when the cards go, at the hold after the chequered flag, the wall goes
+  back by itself. Nothing is stored and there is nothing to switch off afterwards.
+- A core has to ask the plugin for this (`get_vegas_solo()`); LEDMatrix does not upstream yet.
+  Where it does not ask, the setting does nothing and the rotation carries on as before.
+
 ## [1.3.1] - 2026-09-20
 
 ### Added

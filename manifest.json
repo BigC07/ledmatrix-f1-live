@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.4.0",
+      "released": "2026-09-25",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "A live session can take the whole wall. The new live.solo_wall gives the plugin the entire display while a wanted session is running, instead of its turn in the rotation, and hands it straight back when the session ends -- nothing to switch off afterwards. Off by default. It needs a core that asks the plugin for it; where the core does not, the setting does nothing and the rotation carries on as before."
+    },
     {
       "version": "1.3.1",
       "released": "2026-09-20",

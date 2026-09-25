@@ -1,6 +1,6 @@
 # F1 Live
 
-**Version 1.3.1** (2026-09-20) · by [BigC07](https://github.com/BigC07) · [Changelog](CHANGELOG.md)
+**Version 1.4.0** (2026-09-25) · by [BigC07](https://github.com/BigC07) · [Changelog](CHANGELOG.md)
 
 A Formula 1 plugin for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix) with **live timing
 from F1's own feed**: the running order during races, qualifying and practice, flags as they
@@ -122,6 +122,7 @@ install already has.
 | `live.result_sessions` | `["Practice", "Qualifying"]` | Finished sessions kept on the ticker until the next one goes live; `[]` turns it off |
 | `live.race_gap` | `"interval"` | Race rows after P1: `"interval"` to the car ahead, or `"leader"` |
 | `live.cars` | `10` | How many cars the live board shows, from the front: `22` is the whole 2026 field. The favourite driver is added when outside them |
+| `live.solo_wall` | `{"enabled": false, "session_types": ["Race"]}` | While a live session is on, take the whole display instead of a turn in the rotation, and give it back by itself when the session ends. Needs a core that asks the plugin (`get_vegas_solo()`); where it does not, this does nothing |
 | `live.poll_interval` | `20` | Seconds between live snapshots |
 | `live.replay_session_key`, `live.replay_at`, `live.fixture_dir` | `null` | Replay a finished OpenF1 session, to test the live cards without a Grand Prix |
 | `recent_races.podium_only_after_days` | `0` | Days after a race before its result drops to the podium: the top three, with no favourite driver appended. `0` keeps `recent_races.top_finishers` rows until the next race |
@@ -144,6 +145,8 @@ printf WINNER > ~/LEDMatrix/plugin-repos/f1-live/alert-test
 ## Versions
 
 The short list. [CHANGELOG.md](CHANGELOG.md) has every release in full.
+
+**1.4.0** (2026-09-25): a live session can take the whole wall. `live.solo_wall` gives the plugin the entire display while a wanted session is running, instead of its turn in the rotation, and hands it back by itself when the session ends. Off by default, and it needs a core that asks for it.
 
 **1.3.1** (2026-09-20): documentation only -- a changelog, and a README whose version line no longer lags two releases behind.
 

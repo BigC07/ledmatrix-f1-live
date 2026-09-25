@@ -605,6 +605,36 @@
           "minimum": 1,
           "maximum": 30,
           "description": "How many cars the live board shows, from the front: 10 is the top ten, 22 the whole 2026 field. The favourite driver is added when outside them. More cars make the F1 block longer in the scroll."
+        },
+        "solo_wall": {
+          "type": "object",
+          "title": "Take Over The Wall",
+          "description": "While a live session is on, give this plugin the whole display instead of its turn in the rotation. Everything else comes back by itself when the session ends -- there is nothing to switch off afterwards. Needs a core that asks (LEDMatrix does not upstream yet); where it does not, this setting does nothing and the rotation carries on as normal.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "title": "Take Over The Wall",
+              "default": false,
+              "description": "Off by default: this hides every other plugin for the length of a session."
+            },
+            "session_types": {
+              "type": "array",
+              "title": "For Which Sessions",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Race",
+                  "Qualifying",
+                  "Practice"
+                ]
+              },
+              "uniqueItems": true,
+              "default": [
+                "Race"
+              ],
+              "description": "Which live sessions take the wall. A session only counts if it is also in Live Sessions above -- the wall follows the live cards, so a session with no live cards never takes it."
+            }
+          }
         }
       },
       "x-propertyOrder": [
@@ -613,6 +643,7 @@
         "result_sessions",
         "race_gap",
         "cars",
+        "solo_wall",
         "poll_interval",
         "replay_session_key",
         "replay_at",
