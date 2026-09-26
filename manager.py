@@ -1493,12 +1493,16 @@ class F1ScoreboardPlugin(BasePlugin):
             if fav:
                 shown.append(fav)
         leader_lap = snap.get("lap")
-        # In a race, the time to the car ahead by default, as on TV (asked for
-        # on 2026-09-13); live.race_gap "leader" puts the gap to the leader back.
+        # In a race, the gap to the leader by default -- what the TV tower
+        # actually shows, checked against a photo of the broadcast during the
+        # 2026 Azerbaijan GP (2026-09-26). It was the interval to the car ahead
+        # from 2026-09-13 on the belief that THAT was what TV showed, which was
+        # simply wrong. live.race_gap "interval" puts the interval back, and it
+        # is the better number for seeing who is about to be caught.
         race_gap = str((self.config.get("live") or {}).get("race_gap")
-                       or "interval").strip().lower()
+                       or "leader").strip().lower()
         if race_gap not in ("interval", "leader"):
-            race_gap = "interval"
+            race_gap = "leader"
         # The race's fastest lap so far, marked on its holder's row (asked for
         # on 2026-09-13). Not in practice or qualifying, where every row is
         # already a best lap.

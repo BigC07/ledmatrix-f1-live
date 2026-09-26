@@ -595,8 +595,8 @@
             "interval",
             "leader"
           ],
-          "default": "interval",
-          "description": "What the live race rows show after P1: interval is each car's time to the car ahead, as the TV timing tower shows it; leader is the gap to the leader."
+          "default": "leader",
+          "description": "What the live race rows show after P1. leader, the default, is each car's gap to the race leader -- the column the TV timing tower shows. interval is the time to the car ahead instead, which is the better number for seeing who is about to be caught, but does not match the broadcast."
         },
         "cars": {
           "type": "integer",

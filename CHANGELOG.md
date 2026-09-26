@@ -7,6 +7,20 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.7.0] - 2026-09-26
+
+### Changed
+- **Race rows show the gap to the leader by default**, not the time to the car ahead. That is the
+  column the TV timing tower shows -- checked against a photo of the broadcast during the 2026
+  Azerbaijan GP, which read `VER +0.8, HAD +4.5, LEC +5.7, HAM +8.9` where this plugin was showing
+  the differences between adjacent cars.
+- It had been the interval since 1.1.0, on the belief that the interval was what TV displayed. It
+  is not. Anyone watching a live race with this beside the broadcast saw two sets of numbers that
+  disagreed and nothing to explain why, which is why the default moved rather than one wall's
+  config.
+- `live.race_gap` set to `"interval"` restores the old behaviour. It is genuinely the better
+  number for seeing who is about to be caught -- it just is not what the broadcast shows.
+
 ## [1.6.0] - 2026-09-26
 
 ### Added

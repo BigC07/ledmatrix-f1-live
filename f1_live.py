@@ -201,7 +201,7 @@ def live_header_title(state: Dict[str, Any], race_name: str = "") -> str:
 def live_row_from_entry(entry: Dict[str, Any],
                         leader_lap: Optional[int] = None,
                         timed: bool = False,
-                        race_gap: str = "interval") -> Dict[str, Any]:
+                        race_gap: str = "leader") -> Dict[str, Any]:
     """Shape a snapshot entry for F1Renderer.render_race_row().
 
     `timed` is practice and qualifying, which run on best laps rather than
@@ -210,11 +210,21 @@ def live_row_from_entry(entry: Dict[str, Any],
     for twenty minutes of FP1 is not out of anything, and lap counts differ
     by design, so the lap-deficit test would mark half the field retired.
 
-    In a race, `race_gap` "interval" (the default) shows each car's time to
-    the car ahead, as the TV timing tower does; "leader" shows the gap to the
-    leader. The interval is used only when it is a number: a car whose
-    interval is a label ("1L") keeps the leader-gap reading, which is where
-    LAPPED comes from. Asked for on 2026-09-13, during the Spanish GP.
+    In a race, `race_gap` "leader" (the default) shows each car's gap to the
+    race leader, which is the column the TV timing tower shows -- checked
+    against a photo of the broadcast during the 2026 Azerbaijan GP. "interval"
+    shows the time to the car ahead instead: the better number for seeing who
+    is about to be caught, but not what the broadcast shows.
+
+    It was the other way round from 2026-09-13, on the belief that the interval
+    was what TV displayed. Someone installing this and watching a live race
+    beside the broadcast would have found two sets of numbers that disagreed
+    with no explanation, which is why the default moved rather than just the
+    one wall (2026-09-26).
+
+    The interval is used only when it is a number: a car whose interval is a
+    label ("1L") keeps the leader-gap reading, which is where LAPPED comes
+    from.
     """
     if timed:
         gap = entry.get("gap_to_leader")

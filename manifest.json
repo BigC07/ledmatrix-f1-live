@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.7.0",
+      "released": "2026-09-26",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "Race rows now show each car's gap to the leader by default, which is the column the TV timing tower shows. They showed the time to the car ahead before, on the belief that THAT was what the broadcast displayed -- it is not, checked against a photo of the tower during the 2026 Azerbaijan GP. Anyone running this beside a live race saw two sets of numbers that disagreed with no explanation. live.race_gap set to interval puts the old behaviour back; it is the better number for seeing who is about to be caught."
+    },
     {
       "version": "1.6.0",
       "released": "2026-09-26",
