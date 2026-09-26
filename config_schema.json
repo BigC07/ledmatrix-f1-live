@@ -592,11 +592,12 @@
           "type": "string",
           "title": "Race Gap",
           "enum": [
+            "leader",
             "interval",
-            "leader"
+            "auto"
           ],
-          "default": "leader",
-          "description": "What the live race rows show after P1. leader, the default, is each car's gap to the race leader -- the column the TV timing tower shows. interval is the time to the car ahead instead, which is the better number for seeing who is about to be caught, but does not match the broadcast."
+          "default": "auto",
+          "description": "What the live race rows show after P1. auto, the default, alternates the way the TV timing tower does -- it swaps between the two during a race -- and puts TO LEADER or INTERVAL on the header card so you can tell which is up. leader is each car's gap to the race leader; interval is the time to the car ahead, the better number for seeing who is about to be caught. A flag badge takes the header line ahead of the label."
         },
         "cars": {
           "type": "integer",
@@ -658,6 +659,22 @@
               "description": "beside_logo: the ring goes between the driver name and the team badge, and the places-gained figure (+2, -1) stays where it is -- there is no room for a number there, so you get the compound but not how old it is. places_slot: the ring takes the places-gained figure's place and shows the laps on that set beside it, so a car that has just stopped is obvious."
             }
           }
+        },
+        "race_gap_seconds": {
+          "type": "integer",
+          "title": "Seconds Between Gap Swaps",
+          "minimum": 15,
+          "maximum": 600,
+          "default": 60,
+          "description": "With race_gap set to auto, how long each column stays up before it swaps. The block takes well under a minute to scroll past, so 60 keeps a whole pass on one column most of the time."
+        },
+        "winner_rotations": {
+          "type": "integer",
+          "title": "Winner Card Rotations",
+          "minimum": 0,
+          "maximum": 20,
+          "default": 2,
+          "description": "After a race, how many times round the marquee the chequered winner card leads the podium block before it drops away and the block is just the result. 0 turns the card off. It is part of the scroll, not an interruption: a race winner is not urgent the way a red flag is."
         }
       },
       "x-propertyOrder": [
@@ -665,13 +682,15 @@
         "session_types",
         "result_sessions",
         "race_gap",
+        "race_gap_seconds",
         "cars",
         "tyres",
         "solo_wall",
         "poll_interval",
         "replay_session_key",
         "replay_at",
-        "fixture_dir"
+        "fixture_dir",
+        "winner_rotations"
       ],
       "additionalProperties": false
     },

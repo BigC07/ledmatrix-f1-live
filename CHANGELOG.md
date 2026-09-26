@@ -7,6 +7,26 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.8.0] - 2026-09-26
+
+### Changed
+- **The chequered winner card rides the marquee instead of interrupting it.** It was offered
+  through the alert path, which splices a card into the running strip just ahead of the viewport --
+  a mechanism for things that matter in the next thirty seconds, like a red flag or a safety car. A
+  race winner is not that: the race is over and nothing is changing. Watching it at Baku it wedged
+  a chequered card between two driver rows mid-scroll. It now leads the podium block for
+  `live.winner_rotations` passes (2 by default, `0` to turn it off) and then drops away, leaving
+  the block as the result.
+- Race gaps are one decimal, as the TV tower shows them: `+13.7`, not `+13.740`. Qualifying and
+  practice keep their thousandths, where they decide the order.
+
+### Added
+- `live.race_gap: "auto"`, now the default: the gap column alternates the way the TV timing tower
+  does -- it swaps between gap-to-leader and interval during a race -- and the header card carries
+  `TO LEADER` or `INTERVAL` so you can tell which is up. `live.race_gap_seconds` sets the swap
+  interval (60 by default). A flag badge takes the header line ahead of the label.
+- The lap counter shows the total: `LAP 49/51`. It was in the feed already.
+
 ## [1.7.0] - 2026-09-26
 
 ### Changed

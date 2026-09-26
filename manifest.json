@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.8.0",
+      "released": "2026-09-26",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "The chequered winner card joins the marquee instead of interrupting it, the lap counter shows the total, race gaps are one decimal, and race_gap gains an auto mode that alternates the way the TV tower does. The winner card was spliced through the alert path, which exists to jump the queue for a red flag or a safety car; a race winner is not urgent in that way, and splicing it wedged a chequered card between two driver rows mid-scroll. It now leads the podium block for live.winner_rotations passes (2 by default, 0 to turn it off) and then drops away."
+    },
     {
       "version": "1.7.0",
       "released": "2026-09-26",

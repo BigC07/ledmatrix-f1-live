@@ -134,7 +134,8 @@ def format_gap(gap: Any, position: Optional[int],
     """(time_str, status) for render_race_row().
 
     Leader -> LEADER. Lapped -> LAPPED. Retired -> RETIRED. Everyone else
-    a +seconds gap. Never a gap figure for a car that is no longer racing.
+    a +seconds gap, to one decimal as the TV tower shows it. Never a gap figure
+    for a car that is no longer racing.
     """
     # F1's own feed says so outright. The lap-deficit test below is the
     # inference OpenF1 forced, and stays for that path.
@@ -148,7 +149,13 @@ def format_gap(gap: Any, position: Optional[int],
     if position == 1:
         return "LEADER", "Finished"
     if isinstance(gap, (int, float)):
-        return "+%.3f" % float(gap), "Finished"
+        # One decimal, as the TV tower shows it: "+13.7", not "+13.740"
+        # (2026-09-26, the owner with the broadcast beside the wall). Only race
+        # rows come through here; a qualifying or practice row is formatted in
+        # live_row_from_entry and keeps its thousandths, where they decide the
+        # order. It also buys back two characters of a card that is short of
+        # room.
+        return "+%.1f" % float(gap), "Finished"
     return "", "Finished"
 
 

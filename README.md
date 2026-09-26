@@ -1,6 +1,6 @@
 # F1 Live
 
-**Version 1.7.0** (2026-09-26) · by [BigC07](https://github.com/BigC07) · [Changelog](CHANGELOG.md)
+**Version 1.8.0** (2026-09-26) · by [BigC07](https://github.com/BigC07) · [Changelog](CHANGELOG.md)
 
 A Formula 1 plugin for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix) with **live timing
 from F1's own feed**: the running order during races, qualifying and practice, flags as they
@@ -120,7 +120,9 @@ install already has.
 | `live.source` | `"f1"` | `"f1"`: F1's own feed. `"openf1"`: the OpenF1 API, which needs a paid key during a live session |
 | `live.session_types` | `["Race"]` | Which live sessions get a live board: `"Race"` (the Grand Prix and the sprint), `"Qualifying"`, `"Practice"` |
 | `live.result_sessions` | `["Practice", "Qualifying"]` | Finished sessions kept on the ticker until the next one goes live; `[]` turns it off |
-| `live.race_gap` | `"leader"` | Race rows after P1: `"leader"` is the gap to the race leader, the column the TV tower shows; `"interval"` is the time to the car ahead |
+| `live.race_gap` | `"auto"` | `"auto"` alternates between the gap to the leader and the interval to the car ahead, the way the TV tower does, labelling the header with which is up; `"leader"` and `"interval"` pin it |
+| `live.race_gap_seconds` | `60` | With `auto`, how long each column stays up before it swaps |
+| `live.winner_rotations` | `2` | After a race, how many passes of the marquee the chequered winner card leads the podium block for. `0` turns it off |
 | `live.cars` | `10` | How many cars the live board shows, from the front: `22` is the whole 2026 field. The favourite driver is added when outside them |
 | `live.solo_wall` | `{"enabled": false, "session_types": ["Race"]}` | While a live session is on, take the whole display instead of a turn in the rotation, and give it back by itself when the session ends. Needs a core that asks the plugin (`get_vegas_solo()`); where it does not, this does nothing |
 | `live.tyres` | `{"enabled": false}` | Show each car's compound and the laps on it as a coloured ring beside the team logo, in place of the places-gained figure on live rows. From F1's own feed, at no extra request; an OpenF1 replay shows none |
@@ -147,6 +149,8 @@ printf WINNER > ~/LEDMatrix/plugin-repos/f1-live/alert-test
 ## Versions
 
 The short list. [CHANGELOG.md](CHANGELOG.md) has every release in full.
+
+**1.8.0** (2026-09-26): the chequered winner card rides the marquee for a couple of passes instead of interrupting the scroll; `LAP 49/51`; race gaps to one decimal; and `live.race_gap: "auto"` alternates the gap column the way the TV tower does.
 
 **1.7.0** (2026-09-26): race rows show the gap to the leader by default, the column the TV tower shows. They had shown the time to the car ahead since 1.1.0 on the belief that was what TV displayed; it is not. `live.race_gap: "interval"` puts it back.
 

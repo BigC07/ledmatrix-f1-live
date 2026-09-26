@@ -1086,7 +1086,9 @@ class F1Renderer:
 
     def render_live_header(self, title: str, flag: Optional[str] = None,
                            lap: Optional[int] = None,
-                           session_label: Optional[str] = None) -> Image.Image:
+                           session_label: Optional[str] = None,
+                           gap_label: Optional[str] = None,
+                           total_laps: Optional[int] = None) -> Image.Image:
         """f1-live: live_race header. Same furniture as the finished-race
         name card. A flag keeps the usual colours and gets a solid badge at
         the end of the second line. The red flag came first (design B, chosen
@@ -1106,9 +1108,20 @@ class F1Renderer:
         # this card already has and was not using. Cramming them into the
         # title made it 133px against 124 available before the LIVE chip was
         # even drawn, so the chip landed on top of a truncated "ITALIAN GP · S".
+        # f1-live: with race_gap "auto" the rows' gap column alternates the way
+        # the TV tower does, so the header has to say which is up -- "+5.3" to
+        # the leader and "+5.3" to the car ahead are the same four characters.
+        # A flag badge wins the line: a safety car matters more than the label,
+        # and the mode is still readable from the numbers themselves once you
+        # know to look (leader gaps climb down the order, intervals do not).
         subtitle = ""
         if lap:
-            subtitle = "LAP %s" % lap
+            # "LAP 49/51", as the tower shows it: the count on its own does not
+            # say how much race is left (2026-09-26). total_laps is in the feed
+            # already -- LapCount.TotalLaps, carried on every snapshot.
+            subtitle = "LAP %s/%s" % (lap, total_laps) if total_laps else "LAP %s" % lap
+            if gap_label and not badge:
+                subtitle = "%s  %s" % (subtitle, gap_label)
         elif session_label:
             # Practice and qualifying have no lap counter, and the title is
             # the Grand Prix -- this is what says which session is on.

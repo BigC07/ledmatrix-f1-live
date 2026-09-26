@@ -366,8 +366,11 @@ class F1ScoreboardPlugin(BasePlugin):
     # Jolpica's race result takes over once it has the race.
     _PODIUM_KEY = "f1_live_podium"
     _PODIUM_TTL = 36 * 3600
-    _WINNER_PASSES = 4
-    _WINNER_GAP_S = 50      # polls are 20-60 s apart, so about a minute
+    # How many times the chequered winner card leads the podium block before it
+    # drops away and the block is just the result. Rotations of the marquee,
+    # not seconds: the card is part of the scroll, so it should be measured the
+    # way the scroll is (2026-09-26).
+    _WINNER_ROTATIONS = 2
 
     def _restore_podium(self) -> Optional[Dict]:
         cm = getattr(self, "cache_manager", None)
@@ -455,8 +458,7 @@ class F1ScoreboardPlugin(BasePlugin):
                     "entries": top,
                     "lap": final.get("lap"),
                     "captured_at": time.time(),
-                    "winner_left": self._WINNER_PASSES,
-                    "winner_next": 0.0,
+                    "winner_rotations": self._winner_rotations(),
                 }
                 self._save_podium()
                 self.logger.info("Race over: %s wins; podium %s", top[0].get("code"),
@@ -471,6 +473,15 @@ class F1ScoreboardPlugin(BasePlugin):
         if not podium or podium.get("dropped"):
             self._podium_cards = []
             return
+        # A podium captured before 1.8.0 counted alert splices ("winner_left")
+        # rather than rotations. Seed the new count once, so a race that
+        # finished just before an update still gets its winner card; after
+        # that the stored value is respected, including 0.
+        if "winner_rotations" not in podium:
+            podium.pop("winner_left", None)
+            podium.pop("winner_next", None)
+            podium["winner_rotations"] = self._winner_rotations()
+            self._save_podium()
         if live and not live.get("finished") and live.get("session_key") != podium.get("session_key"):
             self._drop_podium("%s is live" % (live.get("session_name") or "a session"))
             return
@@ -481,11 +492,16 @@ class F1ScoreboardPlugin(BasePlugin):
         if now - (podium.get("captured_at") or 0) > self._PODIUM_TTL:
             self._drop_podium("too old")
             return
-        if podium.get("winner_left", 0) > 0 and now >= podium.get("winner_next", 0):
-            self._offer_alert("winner:%s:%d" % (podium.get("session_key"), podium["winner_left"]),
-                              self._winner_card(podium))
-            podium["winner_left"] -= 1
-            podium["winner_next"] = now + self._WINNER_GAP_S
+        # The winner is NOT offered as an alert. Alerts exist to jump the queue
+        # for something that matters in the next thirty seconds -- a red flag,
+        # a safety car. A race winner is not that: the race is over and nothing
+        # is changing, and splicing it wedged a chequered card between two
+        # driver rows mid-scroll (the owner, watching it happen at Baku
+        # 2026-09-26: "not really sure I am liking to have a checker card
+        # appear"). It leads the podium block for a couple of rotations
+        # instead, and then the block is just the result.
+        if getattr(self, "_podium_dirty", False):
+            self._podium_dirty = False
             self._save_podium()
         sig = json.dumps([podium.get("session_key"), self._podium_rows(podium["entries"])],
                          default=str)
@@ -496,11 +512,27 @@ class F1ScoreboardPlugin(BasePlugin):
                              ",".join(e.get("code") or "?" for e in podium["entries"]),
                              len(self._podium_cards))
 
+    def _winner_rotations(self) -> int:
+        """How many rotations the chequered card leads the podium block for."""
+        try:
+            n = int((self.config.get("live") or {}).get("winner_rotations",
+                                                        self._WINNER_ROTATIONS))
+        except (TypeError, ValueError):
+            return self._WINNER_ROTATIONS
+        return max(0, min(20, n))
+
     def _build_podium_cards(self, podium: Dict) -> List[Image.Image]:
-        """The PODIUM header and a race row each for the top three: WINNER on
-        the first, the gap to the winner on the others."""
+        """The chequered winner card, then the PODIUM header and a race row
+        each for the top three: WINNER on the first, the gap to the winner on
+        the others.
+
+        The winner card is always built and always first; get_vegas_content()
+        drops it once the rotations are spent, so no rebuild is needed to stop
+        showing it.
+        """
         r = self._scroll_renderer
-        cards = [r.render_session_result_header("PODIUM", podium.get("meeting_name") or "")]
+        cards = [self._winner_card(podium),
+                 r.render_session_result_header("PODIUM", podium.get("meeting_name") or "")]
         for e in podium.get("entries") or []:
             row = live_row_from_entry(e, podium.get("lap"), race_gap="leader")
             if e.get("position") == 1:
@@ -1457,6 +1489,36 @@ class F1ScoreboardPlugin(BasePlugin):
         except Exception as e:
             self.logger.warning("Test alert failed: %s", e)
 
+    _AUTO_GAP_PERIOD_S = 60
+
+    def _auto_race_gap(self):
+        """(mode, label) for race_gap "auto" -- the column the TV tower swaps
+        between, on a timer.
+
+        The broadcast alternates: photographed three laps apart during the 2026
+        Azerbaijan GP, the tower showed gaps to the leader (+4.5, +5.7, +8.9,
+        climbing) on lap 42 and intervals to the car ahead (+5.3, +1.4, +3.3,
+        up and down) on lap 45 under a BATTLE FOR 1ST header. No fixed setting
+        can match a display that is not fixed, which is what this is for.
+
+        Two things make it safe to alternate a numeric column:
+
+        * The mode is chosen once per card build, so every row in one pass of
+          the block agrees with every other.
+        * The header card says which. A number that silently changes meaning is
+          worse than either column on its own -- "+5.3" behind the leader and
+          "+5.3" behind the car ahead look exactly alike, and on a ticker you
+          see three rows at a time with no tower to give you the context.
+        """
+        try:
+            period = int((self.config.get("live") or {}).get("race_gap_seconds") or 0)
+        except (TypeError, ValueError):
+            period = 0
+        period = max(15, period or self._AUTO_GAP_PERIOD_S)
+        if int(time.time() // period) % 2 == 0:
+            return "leader", "TO LEADER"
+        return "interval", "INTERVAL"
+
     def _build_live_race_cards(self, snap: Dict) -> List[Image.Image]:
         """Header + one row per driver, same layout as the finished-race grid.
 
@@ -1472,9 +1534,7 @@ class F1ScoreboardPlugin(BasePlugin):
         title = (name.replace("Grand Prix", "GP").strip().upper() if name
                  else (snap.get("circuit") or snap.get("country") or "RACE").upper())
         timed = str(snap.get("session_type") or "Race").lower() != "race"
-        cards = [r.render_live_header(
-            title, snap.get("flag"), snap.get("lap"),
-            session_label=snap.get("session_name") if timed else None)]
+        cards = []
         # How many cars: live.cars, 10 by default (asked for on 2026-09-13:
         # "make it an option to show all twenty-two cars"). It used to be
         # recent_races.top_finishers, the finished-race grid's own setting.
@@ -1492,17 +1552,31 @@ class F1ScoreboardPlugin(BasePlugin):
                 None)
             if fav:
                 shown.append(fav)
-        leader_lap = snap.get("lap")
-        # In a race, the gap to the leader by default -- what the TV tower
-        # actually shows, checked against a photo of the broadcast during the
-        # 2026 Azerbaijan GP (2026-09-26). It was the interval to the car ahead
-        # from 2026-09-13 on the belief that THAT was what TV showed, which was
-        # simply wrong. live.race_gap "interval" puts the interval back, and it
-        # is the better number for seeing who is about to be caught.
+        # In a race, the gap to the leader by default -- the column the TV
+        # tower shows, checked against a photo of the broadcast during the 2026
+        # Azerbaijan GP (2026-09-26). It was the interval to the car ahead from
+        # 2026-09-13 on the belief that THAT was what TV showed, which was
+        # wrong. "interval" puts the interval back -- the better number for
+        # seeing who is about to be caught -- and "auto" alternates the way the
+        # tower itself does, labelling the header with whichever is up.
+        #
+        # Decided before the header is built, because the header carries the
+        # label: a header that disagreed with the rows under it would be worse
+        # than no label at all.
         race_gap = str((self.config.get("live") or {}).get("race_gap")
-                       or "leader").strip().lower()
-        if race_gap not in ("interval", "leader"):
-            race_gap = "leader"
+                       or "auto").strip().lower()
+        if race_gap not in ("interval", "leader", "auto"):
+            race_gap = "auto"
+        gap_label = None
+        if race_gap == "auto" and not timed:
+            race_gap, gap_label = self._auto_race_gap()
+        elif race_gap == "auto":
+            race_gap = "leader"     # practice and qualifying have no intervals
+        cards.append(r.render_live_header(
+            title, snap.get("flag"), snap.get("lap"),
+            session_label=snap.get("session_name") if timed else None,
+            gap_label=gap_label, total_laps=snap.get("total_laps")))
+        leader_lap = snap.get("lap")
         # The race's fastest lap so far, marked on its holder's row (asked for
         # on 2026-09-13). Not in practice or qualifying, where every row is
         # already a best lap.
@@ -1781,9 +1855,23 @@ class F1ScoreboardPlugin(BasePlugin):
         # f1-live: after a race, its top three, until Jolpica publishes it
         # (_poll_podium, asked for on 2026-09-13).
         elif getattr(self, "_podium_cards", None):
-            images.extend(self._podium_cards)
+            # The chequered card is cards[0]. It leads the block for the first
+            # few rotations after a race and is then dropped, so the winner
+            # gets announced without the block carrying a banner all week.
+            # Counted here because this is the one place that knows the block
+            # actually went out; the count is written back to the cache on the
+            # next update tick, off the render thread.
+            podium = getattr(self, "_podium", None) or {}
+            left = int(podium.get("winner_rotations") or 0)
+            if left > 0:
+                images.extend(self._podium_cards)
+                podium["winner_rotations"] = left - 1
+                self._podium_dirty = True
+                emitted.append("podium+winner")
+            else:
+                images.extend(self._podium_cards[1:])
+                emitted.append("podium")
             seen.add("podium")
-            emitted.append("podium")
         # f1-live: last_session -- the last finished practice or qualifying,
         # from F1's feed, first until the next session goes live. A stored
         # qualifying result hides the qualifying section: that is the same
