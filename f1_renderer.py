@@ -179,6 +179,12 @@ class F1Renderer:
 
         rr = self.config.get("recent_races", {})
         self.show_position_delta = rr.get("show_position_delta", True)
+        # f1-live: the compound and its age on a live row, in the slot the
+        # places-gained figure otherwise holds (2026-09-26, picked from
+        # mock-ups). Off by default: it takes that figure away, and a wall
+        # that has always shown it should not lose it on an update.
+        self.show_tyres = bool((self.config.get("live") or {})
+                               .get("tyres", {}).get("enabled", False))
         self.show_dnf_status = rr.get("show_dnf_status", True)
 
         cs = self.config.get("constructor_standings", {})
@@ -1194,6 +1200,23 @@ class F1Renderer:
     # f1-live: the fastest-lap stopwatch (2026-09-13). Purple is what F1's own
     # timing uses for the fastest; the lap time beside it is a lighter orchid,
     # so it reads as neither part of the stopwatch nor of the white gap.
+    # f1-live: Pirelli's own colours. HARD is deliberately a shade off white:
+    # pure white on a 4mm panel is hard to tell from ordinary white text at a
+    # glance, which the mock-up showed before any of this was built.
+    TYRE_COLORS = {
+        "SOFT": (218, 41, 28),
+        "MEDIUM": (255, 242, 0),
+        "HARD": (205, 205, 200),
+        "INTERMEDIATE": (67, 176, 42),
+        "WET": (0, 103, 173),
+    }
+    # A ring, not a disc: at five pixels a filled dot reads as a full stop.
+    _TYRE_RING = (" ### ",
+                  "#   #",
+                  "#   #",
+                  "#   #",
+                  " ### ")
+
     FL_PURPLE = (170, 70, 255)
     FL_TIME = (240, 130, 255)
     _FL_ICON = ("..#..", ".###.", ".###.", "#####", "#####", "#####", ".###.")
@@ -1225,6 +1248,35 @@ class F1Renderer:
             if tx + self._tw(draw, t, font) <= right_limit:
                 self._draw_time_text(draw, (tx, y), t, font, self.FL_TIME)
                 return
+
+    def _draw_tyre(self, draw, entry: Dict, logo_x: int, row2: int, font) -> int:
+        """Compound ring and laps-on-it, right-aligned against the team logo.
+
+        Returns the x it starts at, so the caller can stop the fastest-lap
+        time before it -- the one collision the mock-ups turned up. Returns
+        None when there is nothing to draw, and the caller keeps the
+        places-gained figure it would otherwise have replaced.
+        """
+        colour = self.TYRE_COLORS.get(str(entry.get("tyre") or "").upper())
+        if not colour:
+            return None
+        age = entry.get("tyre_age")
+        try:
+            age_text = str(int(age)) if age is not None else ""
+        except (TypeError, ValueError):
+            age_text = ""
+        ring_w = len(self._TYRE_RING[0])
+        x = logo_x - 2 - (self._tw(draw, age_text, font) + 2 if age_text else 0) - ring_w
+        if x < 20:                      # no room on a narrow panel: skip it
+            return None
+        for dy, line in enumerate(self._TYRE_RING):
+            for dx, ch in enumerate(line):
+                if ch == "#":
+                    draw.point((x + dx, row2 + 1 + dy), fill=colour)
+        if age_text:
+            draw.text((x + ring_w + 2, row2), age_text, font=font,
+                      fill=(170, 170, 170))
+        return x
 
     def render_race_row(self, entry: Dict, live: bool = False) -> Image.Image:
         """One finisher, as a full card.
@@ -1319,11 +1371,18 @@ class F1Renderer:
             self._draw_time_text(draw, (x, row2), line2_shown, line2_font, line2_fill)
             line2_end = x + self._tw(draw, line2_shown, line2_font)
 
-        # Line 2 right: places gained or lost, tucked against the team logo.
+        # Line 2 right: the tyre if we have one, else places gained or lost,
+        # tucked against the team logo. Both want the same strip of row, and
+        # during a race the compound and its age say more than how many places
+        # a car is up on its grid slot (2026-09-26).
         right_limit = content_max_x
+        tyre_x = (self._draw_tyre(draw, entry, logo_x, row2, line2_font)
+                  if (live and self.show_tyres) else None)
+        if tyre_x is not None:
+            right_limit = tyre_x - 3
         grid_pos = entry.get("grid", 0)
         pos_val = entry.get("position", 0)
-        if self.show_position_delta and grid_pos > 0 and pos_val > 0:
+        if tyre_x is None and self.show_position_delta and grid_pos > 0 and pos_val > 0:
             delta = grid_pos - pos_val
             if delta != 0:
                 delta_str = "+%d" % delta if delta > 0 else str(delta)

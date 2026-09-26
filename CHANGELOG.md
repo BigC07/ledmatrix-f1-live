@@ -7,6 +7,19 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.5.0] - 2026-09-26
+
+### Added
+- `live.tyres`: the compound each car is on, as a coloured ring beside the team logo -- red soft,
+  yellow medium, white hard, green intermediate, blue wet -- with the laps on that set beside it.
+  A car that has just pitted reads at a glance.
+- On live rows it takes the place of the places-gained figure, which shares that strip of the row;
+  finished race results are untouched and keep theirs. Off by default for that reason.
+- Where a car also holds the fastest lap, the lap time shortens itself to make room rather than
+  running into the ring.
+- No extra requests: `TimingAppData` was already one of the topics subscribed at connect and only
+  `GridPos` was being read out of it. Tyres come from F1's own feed, so an OpenF1 replay shows none.
+
 ## [1.4.0] - 2026-09-25
 
 ### Added

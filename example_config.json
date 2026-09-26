@@ -11,6 +11,7 @@
       "race_gap": "interval",
       "cars": 10,
       "poll_interval": 20,
+      "tyres": {"enabled": false},
       "solo_wall": {"enabled": false, "session_types": ["Race"]}
     },
     "vegas": {

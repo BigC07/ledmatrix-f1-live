@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.5.0",
+      "released": "2026-09-26",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "Tyres on the live board. The new live.tyres shows each car's compound as a coloured ring beside the team logo -- red soft, yellow medium, white hard, green intermediate, blue wet -- with the number of laps on that set beside it, so a car that has just stopped is obvious at a glance. It takes the place of the places-gained figure on live rows only; finished results keep theirs. Off by default. The data already arrives with the live timing (TimingAppData, which the plugin was already subscribed to), so this costs no extra requests; it comes from F1's own feed, so an OpenF1 replay shows no tyres."
+    },
     {
       "version": "1.4.0",
       "released": "2026-09-25",
@@ -66,7 +72,7 @@
       "notes": "The first release under its own name and repository, by BigC07: a fork of ChuckBuilds' F1 Scoreboard 1.8.6, maintained since 2026-09-07. Live timing from F1's own feed: live boards for the race, qualifying and practice, with the interval to the car ahead, places gained, and lapped and retired cars; red flag, safety car and virtual safety car on the live header; a purple stopwatch and the lap time for the fastest lap. After a race, a chequered winner card and the podium until the official result is published. A finished practice or qualifying stays on the ticker until the next session, and qualifying leaves when its race starts. Race rows with the full surname, 5x8 times, cleaner team logos, and drawn logos for Cadillac and Audi. Cards jumping into the scroll (the flag and winner cards) and cards repainted while they scroll need two small LEDMatrix core patches; without them the rest works."
     }
   ],
-  "last_updated": "2026-09-25",
+  "last_updated": "2026-09-26",
   "stars": 0,
   "downloads": 0,
   "verified": false,

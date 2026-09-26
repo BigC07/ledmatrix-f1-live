@@ -230,6 +230,40 @@ def _timed_figures(line: Dict[str, Any]):
     return gap, ahead, _value(laps[last])
 
 
+# Pirelli's five. The feed also emits "UNKNOWN" and, in testing, "TEST"; a
+# compound outside this set is treated as no tyre rather than drawn as one.
+_COMPOUNDS = frozenset({"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"})
+
+
+def _current_stint(app_line: Any) -> Dict[str, Any]:
+    """The set a car is on now, from its TimingAppData line.
+
+    `Stints` is a list in a keyframe and a dict keyed by index in a delta, and
+    _merge() only folds the dict back into a list when the list was there
+    first. A car whose stints arrive as a delta before any keyframe -- which is
+    what a mid-session connect looks like -- keeps the dict shape for the rest
+    of the session, so both are handled here rather than being assumed away.
+
+    The last stint carrying a compound wins: the feed opens an empty stint at a
+    pit entry, before it knows what went on, and reading that as the current
+    set would blank the tyre for the length of a stop.
+    """
+    stints = (app_line or {}).get("Stints")
+    if isinstance(stints, dict):
+        numbered = []
+        for key, val in stints.items():
+            idx = _int(key)
+            if idx is not None and isinstance(val, dict):
+                numbered.append((idx, val))
+        stints = [val for _, val in sorted(numbered)]
+    if not isinstance(stints, list):
+        return {}
+    for stint in reversed(stints):
+        if isinstance(stint, dict) and stint.get("Compound"):
+            return stint
+    return {}
+
+
 def _merge(dst: Any, src: Any) -> Any:
     """Fold one delta into the held state. See the module docstring."""
     if isinstance(src, dict):
@@ -496,6 +530,11 @@ class SignalRLiveFeed:
                 interval = _seconds(line.get("IntervalToPositionAhead"))
                 best = _value(line.get("BestLapTime")) or ""
             team = ident.get("TeamName") or ""
+            # The tyre is already arriving: TimingAppData is one of the ten
+            # topics subscribed at connect, and GridPos was the only thing
+            # read out of it until 2026-09-26. Nothing extra is fetched.
+            worn = _current_stint(stint)
+            compound = str(worn.get("Compound") or "").strip().upper()
             out.append({
                 "position": pos,
                 "driver_number": _int(num),
@@ -515,6 +554,12 @@ class SignalRLiveFeed:
                 "best_lap": best,
                 # The feed says so outright, where OpenF1 made us infer it
                 # from a lap deficit.
+                "tyre": compound if compound in _COMPOUNDS else "",
+                # Laps on this set, the figure that says who has just stopped.
+                # StartLaps is what was already on them when the stint began,
+                # so a scrubbed set does not read as new.
+                "tyre_age": _int(worn.get("TotalLaps")),
+                "tyre_new": str(worn.get("New") or "").strip().lower() == "true",
                 "retired": bool(line.get("Retired")),
                 "stopped": bool(line.get("Stopped")),
                 "in_pit": bool(line.get("InPit")),

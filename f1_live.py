@@ -250,6 +250,11 @@ def live_row_from_entry(entry: Dict[str, Any],
         "time": time_str,
         "status": status,
         "grid": grid,
+        # Empty for the OpenF1 path, which would need a second endpoint for
+        # them; the renderer draws nothing when there is no compound, so a
+        # replay simply looks the way it did before.
+        "tyre": entry.get("tyre") or "",
+        "tyre_age": entry.get("tyre_age"),
     }
 
 
