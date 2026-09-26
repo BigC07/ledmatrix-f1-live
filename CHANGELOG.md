@@ -17,8 +17,19 @@ Dates are the day the version was published. Settings named here are described i
   finished race results are untouched and keep theirs. Off by default for that reason.
 - Where a car also holds the fastest lap, the lap time shortens itself to make room rather than
   running into the ring.
+- `live.tyres.position` picks where it goes. `beside_logo` (the default) puts the ring between the
+  driver name and the team badge and leaves the places-gained figure alone; `places_slot` takes that
+  figure's place and adds the laps on the set beside the ring.
+- A set that has not completed a lap reads `NEW` rather than `0`, for the one lap that is true. A
+  scrubbed set is not caught by it: the feed counts the laps already on those tyres.
 - No extra requests: `TimingAppData` was already one of the topics subscribed at connect and only
   `GridPos` was being read out of it. Tyres come from F1's own feed, so an OpenF1 replay shows none.
+
+### Changed
+- A driver surname that will not fit now drops one font size before it is given up for the
+  three-letter code. 7x13 was chosen because `P3 VERSTAPPEN` is 91px of the 99 available; anything
+  that narrows that column by even a pixel used to cost the whole name. At 6x10 the same name is
+  60px, so the step buys far more than it costs.
 
 ## [1.4.0] - 2026-09-25
 

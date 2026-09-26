@@ -639,13 +639,23 @@
         "tyres": {
           "type": "object",
           "title": "Tyres On The Live Board",
-          "description": "Show each car's tyre compound and how many laps are on it, as a coloured ring beside the team logo: red soft, yellow medium, white hard, green intermediate, blue wet. It takes the place of the places-gained figure (+2, -1) on live rows only -- finished results keep theirs. The data already arrives with the live timing, so this costs no extra requests, but it comes from F1's own feed: a replay through OpenF1 shows no tyres.",
+          "description": "Show each car's tyre compound as a coloured ring: red soft, yellow medium, white hard, green intermediate, blue wet. Live rows only -- finished results are untouched. Where it goes, and whether you also see the laps on that set, is the position setting below. The data already arrives with the live timing, so this costs no extra requests, but it comes from F1's own feed: a replay through OpenF1 shows no tyres.",
           "properties": {
             "enabled": {
               "type": "boolean",
               "title": "Show Tyres",
               "default": false,
               "description": "Off by default because it replaces the places-gained figure on live rows."
+            },
+            "position": {
+              "type": "string",
+              "title": "Where To Put It",
+              "enum": [
+                "places_slot",
+                "beside_logo"
+              ],
+              "default": "beside_logo",
+              "description": "beside_logo: the ring goes between the driver name and the team badge, and the places-gained figure (+2, -1) stays where it is -- there is no room for a number there, so you get the compound but not how old it is. places_slot: the ring takes the places-gained figure's place and shows the laps on that set beside it, so a car that has just stopped is obvious."
             }
           }
         }

@@ -183,8 +183,18 @@ class F1Renderer:
         # places-gained figure otherwise holds (2026-09-26, picked from
         # mock-ups). Off by default: it takes that figure away, and a wall
         # that has always shown it should not lose it on an update.
-        self.show_tyres = bool((self.config.get("live") or {})
-                               .get("tyres", {}).get("enabled", False))
+        _tyres = (self.config.get("live") or {}).get("tyres", {})
+        self.show_tyres = bool(_tyres.get("enabled", False))
+        # Where it goes. "places_slot" trades the places-gained figure for the
+        # compound AND its age; "beside_logo" keeps that figure and shows the
+        # compound alone, there being no room for a number in the narrow band
+        # between the driver name and the badge (2026-09-26, asked for as soon
+        # as the first version went up: "can we move this anywhere on the card").
+        # Default matches config_schema.json: beside_logo, the one that takes
+        # nothing away from a wall that turns this on without reading the note.
+        self.tyre_position = str(_tyres.get("position") or "beside_logo").strip().lower()
+        if self.tyre_position not in ("places_slot", "beside_logo"):
+            self.tyre_position = "beside_logo"
         self.show_dnf_status = rr.get("show_dnf_status", True)
 
         cs = self.config.get("constructor_standings", {})
@@ -413,6 +423,38 @@ class F1Renderer:
             last = full.split()[-1] if full else ""
         code = entry.get("code", "???")
         return self._fit_text(draw, [last.upper(), code], font, max_w)
+
+    def _fit_driver_name_scaled(self, draw: ImageDraw.ImageDraw, entry: Dict,
+                                fonts: List, max_w: int):
+        """(surname, font) at the first size it fits; the 3-letter code if none.
+
+        _fit_driver_name() measures one font against two candidates, so a
+        surname a few pixels too wide drops straight to the code -- the whole
+        name given up to save those pixels. 7x13 was chosen because
+        "P3 VERSTAPPEN" is 91px of the 99 between the accent bar and the team
+        logo; reserving nine for the tyre ring left 90, and the name lost by
+        one pixel. The owner, seeing VER on the mock-up: "the font size should
+        get 1 size smaller to keep whole name" (2026-09-26). At 6x10 the same
+        name is 60px, so a step down buys far more than the ring costs.
+
+        A row that steps down is a row drawn in a smaller face than its
+        neighbours, which is the cost: a long name and a short one in one
+        block will not match. That is still the whole name rather than three
+        letters of it.
+        """
+        last = (entry.get("last_name") or "").strip()
+        if not last:
+            full = (entry.get("name") or "").strip()
+            last = full.split()[-1] if full else ""
+        last = last.upper()
+        primary = fonts[0]
+        for font in fonts:
+            if last and self._tw(draw, last, font) <= max_w:
+                return last, font
+        code = str(entry.get("code") or "???")
+        if self._tw(draw, code, primary) <= max_w:
+            return code, primary
+        return self._truncate(draw, last or code, primary, max_w), primary
 
     def _body_top(self, content_h: int, block_h: int, min_top: int = 2) -> int:
         """Top y for a content block of block_h within content_h. On tall panels
@@ -1216,6 +1258,15 @@ class F1Renderer:
                   "#   #",
                   "#   #",
                   " ### ")
+    # Beside the badge there is height to spare and no number to sit next to,
+    # so the ring can be bigger and read from further back.
+    _TYRE_RING_BIG = ("  ###  ",
+                      " #   # ",
+                      "#     #",
+                      "#     #",
+                      "#     #",
+                      " #   # ",
+                      "  ###  ")
 
     FL_PURPLE = (170, 70, 255)
     FL_TIME = (240, 130, 255)
@@ -1262,9 +1313,20 @@ class F1Renderer:
             return None
         age = entry.get("tyre_age")
         try:
-            age_text = str(int(age)) if age is not None else ""
+            age_val = int(age) if age is not None else None
         except (TypeError, ValueError):
+            age_val = None
+        # A set that has not completed a lap says NEW rather than 0, for the
+        # one lap it is true (2026-09-26, watching cars leave the pits under
+        # the safety car: "put the New tag for 1 lap then start the counter").
+        # A scrubbed set is not caught by this: the feed counts the laps
+        # already on it, so it starts at those rather than at zero.
+        if age_val is None:
             age_text = ""
+        elif age_val <= 0:
+            age_text = "NEW"
+        else:
+            age_text = str(age_val)
         ring_w = len(self._TYRE_RING[0])
         x = logo_x - 2 - (self._tw(draw, age_text, font) + 2 if age_text else 0) - ring_w
         if x < 20:                      # no room on a narrow panel: skip it
@@ -1277,6 +1339,26 @@ class F1Renderer:
             draw.text((x + ring_w + 2, row2), age_text, font=font,
                       fill=(170, 170, 170))
         return x
+
+    def _tyre_colour(self, entry: Dict):
+        """The compound colour for a row, or None when there is nothing to draw."""
+        return self.TYRE_COLORS.get(str(entry.get("tyre") or "").upper())
+
+    def _draw_tyre_beside_logo(self, draw, colour, logo_x: int, height: int) -> None:
+        """The ring in the band between the driver name and the team badge.
+
+        Nothing else lives there, so the places-gained figure below keeps its
+        place. The caller has already shortened the name to make room -- the
+        name is allowed to run to the badge otherwise, and a long one would
+        have been drawn straight through this.
+        """
+        glyph = self._TYRE_RING_BIG
+        x = logo_x - len(glyph[0]) - 2
+        y = (height - len(glyph)) // 2
+        for dy, line in enumerate(glyph):
+            for dx, ch in enumerate(line):
+                if ch == "#":
+                    draw.point((x + dx, y + dy), fill=colour)
 
     def render_race_row(self, entry: Dict, live: bool = False) -> Image.Image:
         """One finisher, as a full card.
@@ -1306,6 +1388,14 @@ class F1Renderer:
         row_logo_w = min(int(content_h * row_logo_frac), self.logo_box_max)
         logo_x = self.display_width - row_logo_w - 2
         content_max_x = logo_x - 2
+        # Decided before the name is measured: in "beside_logo" the ring sits
+        # where a long surname would otherwise reach, so the name has to be
+        # given a nearer right edge rather than being drawn through it.
+        beside_logo = (live and self.show_tyres
+                       and self.tyre_position == "beside_logo"
+                       and self._tyre_colour(entry) is not None)
+        if beside_logo:
+            content_max_x -= len(self._TYRE_RING_BIG[0]) + 2
 
         pos_font = self._race_position_font()
         pos_text = "P%s" % entry.get("position", "?")
@@ -1320,8 +1410,9 @@ class F1Renderer:
                                  fill=(200, 200, 200))
         px = x + self._tw(draw, pos_text, pos_font) + 3
         name_font = self._race_name_font()
-        name = self._fit_driver_name(draw, entry, name_font,
-                                     content_max_x - px)
+        # A step down in size before giving the surname up for the code.
+        name, name_font = self._fit_driver_name_scaled(
+            draw, entry, [name_font, self.fonts["position"]], content_max_x - px)
         # Sit the number and the name on a common baseline, measured from the
         # rendered GLYPHS. The number is 9x15 and the name 6x10, and offsetting
         # by the difference in font height put the surname four rows low, so it
@@ -1376,8 +1467,11 @@ class F1Renderer:
         # during a race the compound and its age say more than how many places
         # a car is up on its grid slot (2026-09-26).
         right_limit = content_max_x
+        if beside_logo:
+            self._draw_tyre_beside_logo(draw, self._tyre_colour(entry), logo_x,
+                                        content_h)
         tyre_x = (self._draw_tyre(draw, entry, logo_x, row2, line2_font)
-                  if (live and self.show_tyres) else None)
+                  if (live and self.show_tyres and not beside_logo) else None)
         if tyre_x is not None:
             right_limit = tyre_x - 3
         grid_pos = entry.get("grid", 0)
