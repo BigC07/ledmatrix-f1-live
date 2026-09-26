@@ -7,6 +7,19 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.6.0] - 2026-09-26
+
+### Added
+- `visual.row_logo_height`: how tall a driver row's team badge is drawn, in pixels. `0`, the
+  default, keeps the automatic size, so an update changes nothing unless you ask it to. Much past
+  22 on a 32px card and a round badge starts crowding the row.
+
+### Fixed
+- A driver row's badge is centred in the height it actually has. Both row renderers centred it
+  against the full card, ignoring the 2px team-colour line along the bottom and, on a live row,
+  the 2px rail along the top -- so a badge sat low by a pixel or two. Invisible at the automatic
+  size, obvious as soon as the badge is made bigger.
+
 ## [1.5.0] - 2026-09-26
 
 ### Added

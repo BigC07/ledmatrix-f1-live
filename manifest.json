@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.6.0",
+      "released": "2026-09-26",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "Driver row badges can be made bigger, and are now centred in the space they actually have. visual.row_logo_height sets the height in pixels; 0, the default, keeps the automatic size, so nothing changes unless you ask. The centring fix applies either way: both row renderers centred the badge against the full card height, ignoring the 2px team-colour line along the bottom and, on a live row, the 2px rail along the top. At the automatic size there is enough slack that it never showed; raise the height and it does."
+    },
     {
       "version": "1.5.0",
       "released": "2026-09-26",

@@ -1,6 +1,6 @@
 # F1 Live
 
-**Version 1.5.0** (2026-09-26) · by [BigC07](https://github.com/BigC07) · [Changelog](CHANGELOG.md)
+**Version 1.6.0** (2026-09-26) · by [BigC07](https://github.com/BigC07) · [Changelog](CHANGELOG.md)
 
 A Formula 1 plugin for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix) with **live timing
 from F1's own feed**: the running order during races, qualifying and practice, flags as they
@@ -124,6 +124,7 @@ install already has.
 | `live.cars` | `10` | How many cars the live board shows, from the front: `22` is the whole 2026 field. The favourite driver is added when outside them |
 | `live.solo_wall` | `{"enabled": false, "session_types": ["Race"]}` | While a live session is on, take the whole display instead of a turn in the rotation, and give it back by itself when the session ends. Needs a core that asks the plugin (`get_vegas_solo()`); where it does not, this does nothing |
 | `live.tyres` | `{"enabled": false}` | Show each car's compound and the laps on it as a coloured ring beside the team logo, in place of the places-gained figure on live rows. From F1's own feed, at no extra request; an OpenF1 replay shows none |
+| `visual.row_logo_height` | `0` | How tall a driver row's team badge is, in pixels. `0` keeps the automatic size (about two thirds of the card). Past about 22 on a 32px card a round badge crowds the row |
 | `live.poll_interval` | `20` | Seconds between live snapshots |
 | `live.replay_session_key`, `live.replay_at`, `live.fixture_dir` | `null` | Replay a finished OpenF1 session, to test the live cards without a Grand Prix |
 | `recent_races.podium_only_after_days` | `0` | Days after a race before its result drops to the podium: the top three, with no favourite driver appended. `0` keeps `recent_races.top_finishers` rows until the next race |
@@ -146,6 +147,8 @@ printf WINNER > ~/LEDMatrix/plugin-repos/f1-live/alert-test
 ## Versions
 
 The short list. [CHANGELOG.md](CHANGELOG.md) has every release in full.
+
+**1.6.0** (2026-09-26): driver row badges can be made bigger (`visual.row_logo_height`), and are centred in the height they actually have rather than the full card -- which had them sitting a pixel or two low all along.
 
 **1.5.0** (2026-09-26): tyres on the live board. `live.tyres` shows the compound as a coloured ring beside the team logo with the laps on that set beside it, in place of the places-gained figure on live rows. Off by default, and it costs no extra requests.
 

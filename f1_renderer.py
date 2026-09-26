@@ -177,6 +177,16 @@ class F1Renderer:
         df = vis.get("driver_form", {})
         self.show_driver_form = df.get("enabled", True)
 
+        # f1-live: how tall a driver row's team badge is drawn, in pixels; 0
+        # keeps the automatic size (2026-09-26, the owner wanting bigger logos
+        # and then finding 25px crowded: "let's try D" -- 22). Capped by
+        # logo_box_max as the automatic size is.
+        try:
+            self.row_logo_px = int((self.config.get("visual") or {})
+                                   .get("row_logo_height") or 0)
+        except (TypeError, ValueError):
+            self.row_logo_px = 0
+
         rr = self.config.get("recent_races", {})
         self.show_position_delta = rr.get("show_position_delta", True)
         # f1-live: the compound and its age on a live row, in the slot the
@@ -455,6 +465,28 @@ class F1Renderer:
         if self._tw(draw, code, primary) <= max_w:
             return code, primary
         return self._truncate(draw, last or code, primary, max_w), primary
+
+    def _row_logo_box(self, content_h: int) -> int:
+        """Side of the square a driver row's team badge is fitted into."""
+        if self.row_logo_px:
+            return max(8, min(self.row_logo_px, self.logo_box_max))
+        frac = 0.8 if self.is_tall else 0.65
+        return min(int(content_h * frac), self.logo_box_max)
+
+    def _row_logo_y(self, content_h: int, logo_h: int, live: bool = False) -> int:
+        """Top y for a row's badge, centred in the space actually free.
+
+        Every driver row carries a 2px team-colour line along the bottom, and a
+        live one a 2px rail along the top, so the badge has content_h - 4 to sit
+        in rather than content_h. Centring against the full height put a 25px
+        badge one pixel under the rail and made it look crowded and off (found
+        2026-09-26 by measuring the rendered row -- it reads as bad centring,
+        but the badge was where centring would put it; it was simply too big).
+        At the automatic 20px there is enough slack for the difference not to
+        show, which is why this went unnoticed.
+        """
+        top = 2 if live else 0
+        return top + max(0, (content_h - top - 2 - logo_h) // 2)
 
     def _body_top(self, content_h: int, block_h: int, min_top: int = 2) -> int:
         """Top y for a content block of block_h within content_h. On tall panels
@@ -1384,8 +1416,7 @@ class F1Renderer:
         x = self.accent_bar_width + 2
 
         content_h = self.display_height
-        row_logo_frac = 0.8 if self.is_tall else 0.65
-        row_logo_w = min(int(content_h * row_logo_frac), self.logo_box_max)
+        row_logo_w = self._row_logo_box(content_h)
         logo_x = self.display_width - row_logo_w - 2
         content_max_x = logo_x - 2
         # Decided before the name is measured: in "beside_logo" the ring sits
@@ -1500,7 +1531,7 @@ class F1Renderer:
                                               max_width=row_logo_w)
         if logo:
             img.paste(logo, (self.display_width - logo.width - 2,
-                             (content_h - logo.height) // 2), logo)
+                             self._row_logo_y(content_h, logo.height, live)), logo)
 
         # The upstream corner dot, for finished races; a live row has the
         # stopwatch instead.
@@ -1866,8 +1897,7 @@ class F1Renderer:
         content_h = self.display_height
         # Team logo on the right — bigger on tall panels. Reserve exactly the
         # width it occupies (it's drawn at the same fraction below).
-        row_logo_frac = 0.8 if self.is_tall else 0.65
-        row_logo_w = min(int(content_h * row_logo_frac), self.logo_box_max)
+        row_logo_w = self._row_logo_box(content_h)
         content_max_x = self.display_width - (row_logo_w + 4)
 
         # Local patch: same shape as render_race_row -- the name owns line 1 and
@@ -1951,7 +1981,7 @@ class F1Renderer:
             cid, max_height=row_logo_w, max_width=row_logo_w)
         if logo:
             lx = self.display_width - logo.width - 2
-            ly = (content_h - logo.height) // 2
+            ly = self._row_logo_y(content_h, logo.height)
             img.paste(logo, (lx, ly), logo)
 
         # Fastest lap dot (sprint results only — same 3×3 purple dot as race result)

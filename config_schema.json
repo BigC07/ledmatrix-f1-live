@@ -931,6 +931,14 @@
             "enabled"
           ],
           "additionalProperties": false
+        },
+        "row_logo_height": {
+          "type": "integer",
+          "title": "Driver Row Logo Height",
+          "minimum": 0,
+          "maximum": 32,
+          "default": 0,
+          "description": "How tall the team badge is on a driver row, in pixels. 0 keeps the automatic size, which is about two thirds of the card. Raising it makes every badge bigger, but the round ones crowd the row: on a 32px card the badge shares the height with a 2px team-colour line and, on a live row, a 2px rail, so much past 22 leaves a circle almost touching both."
         }
       },
       "x-propertyOrder": [
