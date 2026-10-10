@@ -127,6 +127,14 @@ _RED_FLAG_BADGE = (230, 0, 0)
 # dark letters (asked for on 2026-09-13, like the red flag's).
 _SAFETY_CAR_BADGE = (255, 220, 0)
 _VSC_BADGE = (235, 185, 0)
+# f1-live: a sprint race recolours the live header (2026-10-10). The same
+# orange the sprint results card has always used, so the two agree, and the
+# bar under it dark enough to leave the white second line readable. Chosen
+# from renders of five placements: the colour is the part that carries across
+# the room, and unlike a word it costs no width, so it works on a 128px card
+# as well as a 256px one.
+_SPRINT_ORANGE = (255, 120, 0)
+_SPRINT_BAR = (35, 14, 0)
 
 
 class F1Renderer:
@@ -1089,7 +1097,7 @@ class F1Renderer:
                            session_label: Optional[str] = None,
                            gap_label: Optional[str] = None,
                            total_laps: Optional[int] = None,
-                           chip: str = "LIVE") -> Image.Image:
+                           sprint: bool = False) -> Image.Image:
         """f1-live: live_race header. Same furniture as the finished-race
         name card. A flag keeps the usual colours and gets a solid badge at
         the end of the second line. The red flag came first (design B, chosen
@@ -1098,11 +1106,17 @@ class F1Renderer:
         card until 2026-09-13, when they were asked for as badges too:
         SAFETY CAR in yellow, VIRTUAL SC in a darker yellow.
 
-        ``chip`` is the word in the red chip at the right end of the title
-        line: LIVE, or SPRINT during a sprint race (2026-10-10, the Singapore
+        ``sprint`` recolours the card orange and makes the lap counter read
+        "SPRINT 12/20" instead of "LAP 12/20" (2026-10-10, the Singapore
         sprint -- F1's feed types a sprint "Race", so the card read SINGAPORE
-        GP with LIVE, and LAP 12/20 was the only hint). The title is fitted
-        clear of whichever word is up, stepping down a tier before it is cut.
+        GP with LIVE and LAP 12/20 was the only hint it was not Sunday).
+
+        1.9.0 put the word in the chip instead, and the owner asked for the
+        chip back: LIVE is what the chip says, in every session. The counter
+        carries the word now, where it costs no width -- it replaces "LAP"
+        rather than joining it -- and the orange is what reads from across
+        the room. Sprint qualifying is timed and already names itself on the
+        second line; it is not a sprint race and stays red.
         """
         badge = {
             # (text, fill, text colour[, short text for a crowded line])
@@ -1126,7 +1140,12 @@ class F1Renderer:
             # "LAP 49/51", as the tower shows it: the count on its own does not
             # say how much race is left (2026-09-26). total_laps is in the feed
             # already -- LapCount.TotalLaps, carried on every snapshot.
-            subtitle = "LAP %s/%s" % (lap, total_laps) if total_laps else "LAP %s" % lap
+            # On a sprint the word SPRINT takes the place of LAP rather than
+            # being added to the line, so saying which race it is costs two
+            # characters, not a whole label (2026-10-10).
+            counter = "SPRINT" if sprint else "LAP"
+            subtitle = ("%s %s/%s" % (counter, lap, total_laps) if total_laps
+                        else "%s %s" % (counter, lap))
             if gap_label and not badge:
                 subtitle = "%s  %s" % (subtitle, gap_label)
         elif session_label:
@@ -1139,19 +1158,23 @@ class F1Renderer:
         # Measure the chip first so the title truncates clear of it.
         probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
         chip_font = self.fonts["position"]
-        chip_w = self._tw(probe, chip, chip_font) + 5
-        img = self._render_session_header(title, subtitle, F1_RED, (40, 0, 0),
-                                          reserve_right=chip_w, badge=badge)
+        chip_w = self._tw(probe, "LIVE", chip_font) + 5
+        img = self._render_session_header(
+            title, subtitle,
+            _SPRINT_ORANGE if sprint else F1_RED,
+            _SPRINT_BAR if sprint else (40, 0, 0),
+            reserve_right=chip_w, badge=badge)
         draw = ImageDraw.Draw(img)
         draw.fontmode = "1"
-        label = chip
+        label = "LIVE"
         f = chip_font
         lw = self._tw(draw, label, f)
         lh = self._th(draw, label, f)
         lx = self.display_width - lw - 3
         draw.rectangle([lx - 2, 2, self.display_width - 1, 3 + lh], fill=(150, 0, 0))
         self._draw_text_outlined(draw, (lx, 3), label, f, fill=(255, 255, 255))
-        draw.rectangle([0, 0, self.display_width - 1, 1], fill=_LIVE_RAIL)
+        draw.rectangle([0, 0, self.display_width - 1, 1],
+                       fill=_SPRINT_ORANGE if sprint else _LIVE_RAIL)
         return img
 
     def _race_position_font(self):

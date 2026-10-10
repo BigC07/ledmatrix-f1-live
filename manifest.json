@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.9.1",
+      "released": "2026-10-10",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "A sprint is named by the card, not by the chip. 1.9.1 puts LIVE back in the chip -- it says LIVE in every session, as it always did -- and says sprint two ways that cost no width instead: the live header turns sprint orange, and the lap counter reads SPRINT 12/20 in place of LAP 12/20. The title keeps GP, which 1.9.0 dropped to make room for the wider chip on a measurement taken against a 128px card. Sprint qualifying is timed, names itself on the second line, and is unchanged."
+    },
     {
       "version": "1.9.0",
       "released": "2026-10-10",
@@ -96,7 +102,7 @@
       "notes": "The first release under its own name and repository, by BigC07: a fork of ChuckBuilds' F1 Scoreboard 1.8.6, maintained since 2026-09-07. Live timing from F1's own feed: live boards for the race, qualifying and practice, with the interval to the car ahead, places gained, and lapped and retired cars; red flag, safety car and virtual safety car on the live header; a purple stopwatch and the lap time for the fastest lap. After a race, a chequered winner card and the podium until the official result is published. A finished practice or qualifying stays on the ticker until the next session, and qualifying leaves when its race starts. Race rows with the full surname, 5x8 times, cleaner team logos, and drawn logos for Cadillac and Audi. Cards jumping into the scroll (the flag and winner cards) and cards repainted while they scroll need two small LEDMatrix core patches; without them the rest works."
     }
   ],
-  "last_updated": "2026-09-26",
+  "last_updated": "2026-10-10",
   "stars": 0,
   "downloads": 0,
   "verified": false,

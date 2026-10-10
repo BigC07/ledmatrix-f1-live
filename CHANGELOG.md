@@ -7,6 +7,21 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.9.1] - 2026-10-10
+
+### Changed
+- **A sprint is named by the card, not by the chip.** `LIVE` is back in the chip at the top right,
+  where it says `LIVE` in every session as it always did. A sprint says so two other ways, neither
+  of which costs any width: the live header turns sprint orange -- the same orange the sprint
+  results card uses -- and the lap counter reads `SPRINT 12/20` in place of `LAP 12/20`. Because
+  nothing on the card got wider, the title keeps `GP`; 1.9.0 dropped it to make room for the wider
+  chip, on a measurement taken against a 128px card. On a 256px panel `SINGAPORE GP` is 84px
+  against 211 available. Sprint qualifying is timed, names itself on the second line, and is
+  unchanged.
+
+### Fixed
+- `last_updated` in the manifest, which 1.9.0 left at the 1.8.0 date.
+
 ## [1.9.0] - 2026-10-10
 
 ### Changed

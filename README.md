@@ -17,8 +17,9 @@ sprint, the calendar and the upcoming-race card -- and is described in
 Drawn with the plugin's own code from the 2026 Spanish Grand Prix, one dot per LED. Each card is
 128 × 32 LEDs, and the scroll carries them across the panels one after another.
 
-**The live board.** The header with the lap and a LIVE chip (SPRINT during a sprint race), then a card per driver: the interval
+**The live board.** The header with the lap and a LIVE chip, then a card per driver: the interval
 to the car ahead, places gained since the start, and a red rail along the top of every live card.
+During a sprint race the header turns orange and the counter reads `SPRINT 12/20`.
 
 ![The live board: SPANISH GP, LAP 57, then Antonelli leading, Verstappen, Norris and Leclerc](docs/images/live-board.png)
 
