@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.9.0",
+      "released": "2026-10-10",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "The live header says when it is a sprint. F1's feed types a sprint race as a Race and names it Sprint, so the board drew the Singapore sprint as the Grand Prix -- SINGAPORE GP with a LIVE chip, and LAP 12/20 the only hint it was not Sunday. During a sprint the chip now reads SPRINT and the title drops GP so the name keeps its full-size title beside the wider chip. Sprint qualifying already named itself on the second line and is unchanged."
+    },
     {
       "version": "1.8.0",
       "released": "2026-09-26",

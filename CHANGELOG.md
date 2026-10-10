@@ -7,6 +7,17 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.9.0] - 2026-10-10
+
+### Changed
+- **The live header says when it is a sprint.** F1's feed types a sprint race as `Race` and names
+  it `Sprint`, so the board drew the Singapore sprint as the Grand Prix -- `SINGAPORE GP` with the
+  LIVE chip, and `LAP 12/20` the only hint it was not Sunday. During a sprint the chip reads
+  `SPRINT` and the title drops `GP` so the name keeps its full-size title beside the wider chip (on a
+  128px card the title is 7x13 and the chip 6x10, and the header steps a title that does not fit down
+  a font tier, so `SINGAPORE GP` beside `SPRINT` would shrink). Sprint qualifying already named
+  itself on the second line and is unchanged.
+
 ## [1.8.0] - 2026-09-26
 
 ### Changed

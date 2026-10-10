@@ -1088,7 +1088,8 @@ class F1Renderer:
                            lap: Optional[int] = None,
                            session_label: Optional[str] = None,
                            gap_label: Optional[str] = None,
-                           total_laps: Optional[int] = None) -> Image.Image:
+                           total_laps: Optional[int] = None,
+                           chip: str = "LIVE") -> Image.Image:
         """f1-live: live_race header. Same furniture as the finished-race
         name card. A flag keeps the usual colours and gets a solid badge at
         the end of the second line. The red flag came first (design B, chosen
@@ -1096,6 +1097,12 @@ class F1Renderer:
         version -- barely showed. The safety car and the VSC recoloured the
         card until 2026-09-13, when they were asked for as badges too:
         SAFETY CAR in yellow, VIRTUAL SC in a darker yellow.
+
+        ``chip`` is the word in the red chip at the right end of the title
+        line: LIVE, or SPRINT during a sprint race (2026-10-10, the Singapore
+        sprint -- F1's feed types a sprint "Race", so the card read SINGAPORE
+        GP with LIVE, and LAP 12/20 was the only hint). The title is fitted
+        clear of whichever word is up, stepping down a tier before it is cut.
         """
         badge = {
             # (text, fill, text colour[, short text for a crowded line])
@@ -1132,12 +1139,12 @@ class F1Renderer:
         # Measure the chip first so the title truncates clear of it.
         probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
         chip_font = self.fonts["position"]
-        chip_w = self._tw(probe, "LIVE", chip_font) + 5
+        chip_w = self._tw(probe, chip, chip_font) + 5
         img = self._render_session_header(title, subtitle, F1_RED, (40, 0, 0),
                                           reserve_right=chip_w, badge=badge)
         draw = ImageDraw.Draw(img)
         draw.fontmode = "1"
-        label = "LIVE"
+        label = chip
         f = chip_font
         lw = self._tw(draw, label, f)
         lh = self._th(draw, label, f)

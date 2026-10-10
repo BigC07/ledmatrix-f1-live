@@ -1534,6 +1534,19 @@ class F1ScoreboardPlugin(BasePlugin):
         title = (name.replace("Grand Prix", "GP").strip().upper() if name
                  else (snap.get("circuit") or snap.get("country") or "RACE").upper())
         timed = str(snap.get("session_type") or "Race").lower() != "race"
+        # f1-live (2026-10-10): F1's feed types a sprint race "Race" and names
+        # it "Sprint", so the board drew the Singapore sprint as the Grand
+        # Prix -- "SINGAPORE GP" with the LIVE chip, and "LAP 12/20" the only
+        # hint it was not Sunday. The chip says SPRINT instead, and the title
+        # drops "GP" so the name keeps the full-size title beside the wider
+        # chip: on a 128px card the title is 7x13 and the chip 6x10, and the
+        # header steps a title that does not fit down a font tier, so
+        # "SINGAPORE GP" beside SPRINT would shrink. Sprint qualifying is timed
+        # and already names itself on the second line.
+        sprint = (not timed
+                  and "sprint" in str(snap.get("session_name") or "").lower())
+        if sprint and name:
+            title = name.replace("Grand Prix", "").strip().upper() or title
         cards = []
         # How many cars: live.cars, 10 by default (asked for on 2026-09-13:
         # "make it an option to show all twenty-two cars"). It used to be
@@ -1575,7 +1588,8 @@ class F1ScoreboardPlugin(BasePlugin):
         cards.append(r.render_live_header(
             title, snap.get("flag"), snap.get("lap"),
             session_label=snap.get("session_name") if timed else None,
-            gap_label=gap_label, total_laps=snap.get("total_laps")))
+            gap_label=gap_label, total_laps=snap.get("total_laps"),
+            chip="SPRINT" if sprint else "LIVE"))
         leader_lap = snap.get("lap")
         # The race's fastest lap so far, marked on its holder's row (asked for
         # on 2026-09-13). Not in practice or qualifying, where every row is
