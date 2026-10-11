@@ -7,6 +7,22 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.10.0] - 2026-10-11
+
+### Changed
+- **The flag colours the rail, on every card in the live block.** A safety car turns the rail the
+  `SAFETY CAR` badge's yellow and a virtual safety car the `VIRTUAL SC` badge's darker yellow --
+  on the header *and* on every driver row under it, so the whole section reads as flagged from any
+  glance. Asked for during the Singapore race: the badge rides the header, and a header is on screen
+  about 1.5% of a strip cycle, so once it scrolled past nothing said a safety car was out. That is
+  the same reasoning that put the rail on every row in the first place. The rail reuses the badges'
+  own colours, so the two agree instead of being two different yellows, and a flag outranks the
+  sprint colour -- a safety car matters more than which race this is.
+- **A red flag is deliberately unchanged.** Rendered and looked at: the alarm red (`230,0,0`) and
+  the live rail (`255,40,40`) are the same to the eye on a driver row, so a red flag cannot announce
+  itself in red. White and a 4px rail both worked and both were offered; the owner chose to leave it
+  alone. The `RED FLAG` badge still carries it, and the session is stopped anyway.
+
 ## [1.9.1] - 2026-10-10
 
 ### Changed

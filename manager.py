@@ -1601,7 +1601,10 @@ class F1ScoreboardPlugin(BasePlugin):
             if fastest and (entry.get("code") or "") == fastest:
                 row["fastest_lap"] = True
                 row["fastest_lap_time"] = entry.get("best_lap") or ""
-            cards.append(r.render_race_row(row, live=True))
+            # f1-live (2026-10-11): the flag goes to every row, not just the
+            # header, so the rail says a safety car is out for the whole block.
+            cards.append(r.render_race_row(row, live=True,
+                                           flag=snap.get("flag")))
         return cards
 
     # ─── Vegas Mode ────────────────────────────────────────────────────

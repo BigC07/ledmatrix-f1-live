@@ -19,7 +19,9 @@ Drawn with the plugin's own code from the 2026 Spanish Grand Prix, one dot per L
 
 **The live board.** The header with the lap and a LIVE chip, then a card per driver: the interval
 to the car ahead, places gained since the start, and a red rail along the top of every live card.
-During a sprint race the header turns orange and the counter reads `SPRINT 12/20`.
+During a sprint race the header turns orange and the counter reads `SPRINT 12/20`. Under a safety
+car or a virtual safety car that rail turns yellow on every card in the block, matching the badge
+on the header, so the flag is readable from any glance and not only while the header is on screen.
 
 ![The live board: SPANISH GP, LAP 57, then Antonelli leading, Verstappen, Norris and Leclerc](docs/images/live-board.png)
 

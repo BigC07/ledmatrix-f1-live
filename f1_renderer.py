@@ -136,6 +136,38 @@ _VSC_BADGE = (235, 185, 0)
 _SPRINT_ORANGE = (255, 120, 0)
 _SPRINT_BAR = (35, 14, 0)
 
+# f1-live: the flag colours the rail, on every card in the live block
+# (2026-10-11). The badge is on the header, and the header is up about 1.5% of
+# a strip cycle -- which is the reasoning that put the rail there to begin
+# with, below. Asked for during the Singapore race: "it is hard to tell after
+# the title card goes past".
+#
+# The badges' own colours, so the rail and the badge agree instead of being two
+# different yellows.
+#
+# RED is deliberately absent. A red flag cannot announce itself in red: the
+# alarm red (230, 0, 0) and the live rail (255, 40, 40) are the same to the eye
+# on a row -- rendered side by side and looked at, 2026-10-11, which is the
+# only way that question gets settled. The badge carries the red flag, and the
+# session is stopped anyway. White and a 4px rail both worked; the owner chose
+# to leave the red flag alone.
+_FLAG_RAIL = {
+    "SC": _SAFETY_CAR_BADGE,
+    "VSC": _VSC_BADGE,
+}
+
+
+def _rail_colour(flag=None, sprint=False):
+    """The colour of the rail along the top of a live card.
+
+    A flag outranks the sprint colour: a safety car matters more than which
+    race this is, and the sprint has the whole card's palette to say so.
+    """
+    colour = _FLAG_RAIL.get(str(flag or "").upper())
+    if colour:
+        return colour
+    return _SPRINT_ORANGE if sprint else _LIVE_RAIL
+
 
 class F1Renderer:
     """Renders F1 display cards as PIL Images."""
@@ -1174,7 +1206,7 @@ class F1Renderer:
         draw.rectangle([lx - 2, 2, self.display_width - 1, 3 + lh], fill=(150, 0, 0))
         self._draw_text_outlined(draw, (lx, 3), label, f, fill=(255, 255, 255))
         draw.rectangle([0, 0, self.display_width - 1, 1],
-                       fill=_SPRINT_ORANGE if sprint else _LIVE_RAIL)
+                       fill=_rail_colour(flag, sprint))
         return img
 
     def _race_position_font(self):
@@ -1435,7 +1467,8 @@ class F1Renderer:
                 if ch == "#":
                     draw.point((x + dx, y + dy), fill=colour)
 
-    def render_race_row(self, entry: Dict, live: bool = False) -> Image.Image:
+    def render_race_row(self, entry: Dict, live: bool = False,
+                        flag: Optional[str] = None) -> Image.Image:
         """One finisher, as a full card.
 
         Local patch (repo patches/patch_f1_race_rows.py). Deliberately NOT a
@@ -1593,8 +1626,14 @@ class F1Renderer:
         # finished-race row -- both show a gap. This rail runs unbroken along
         # the top of every card in the live block, so the whole section reads as
         # live from any glance. Drawn last so nothing paints over it.
+        #
+        # Since 2026-10-11 the flag colours it too, by exactly the argument
+        # above: the SAFETY CAR badge rides the header, so for the other 98.5%
+        # of the cycle the rows gave no sign a flag was out. Same helper as the
+        # header uses, so the two cannot drift apart.
         if live:
-            draw.rectangle([0, 0, self.display_width - 1, 1], fill=_LIVE_RAIL)
+            draw.rectangle([0, 0, self.display_width - 1, 1],
+                           fill=_rail_colour(flag))
         return img
 
     def render_favorite_race_card(self, race: Dict, result: Dict) -> Image.Image:
