@@ -151,7 +151,12 @@ _SPRINT_BAR = (35, 14, 0)
 # only way that question gets settled. The badge carries the red flag, and the
 # session is stopped anyway. White and a 4px rail both worked; the owner chose
 # to leave the red flag alone.
+# YELLOW takes the safety car's yellow rather than a third shade of its own:
+# three yellows are not tellable apart on a two-pixel rail, and a local yellow
+# and a safety car are the same message at a glance -- caution on track. The
+# header badge is what says which (2026-10-12).
 _FLAG_RAIL = {
+    "YELLOW": _SAFETY_CAR_BADGE,
     "SC": _SAFETY_CAR_BADGE,
     "VSC": _VSC_BADGE,
 }
@@ -1152,6 +1157,10 @@ class F1Renderer:
         """
         badge = {
             # (text, fill, text colour[, short text for a crowded line])
+            # YELLOW is a local yellow (TrackStatus 2), added 2026-10-12. It
+            # shares the safety car's colour -- see _FLAG_RAIL -- so the badge
+            # is the only thing that tells the two apart.
+            "YELLOW": ("YELLOW FLAG", _SAFETY_CAR_BADGE, (0, 0, 0), "YEL"),
             "SC": ("SAFETY CAR", _SAFETY_CAR_BADGE, (0, 0, 0), "SC"),
             "VSC": ("VIRTUAL SC", _VSC_BADGE, (0, 0, 0), "VSC"),
             "RED": ("RED FLAG", _RED_FLAG_BADGE, (255, 255, 255)),

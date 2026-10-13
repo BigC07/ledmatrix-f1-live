@@ -94,7 +94,17 @@ _HTTP_TIMEOUT_S = 10
 # TrackStatus.Status. Only race-wide states get a chip, matching the OpenF1
 # path: "2" (a yellow somewhere) is ignored the way sector yellows are there,
 # and "7" (VSC ending) clears the chip the way "VSC ENDING" does there.
-_TRACK_FLAG = {"4": "SC", "5": "RED", "6": "VSC"}
+# F1's TrackStatus codes. 1 is all clear.
+#
+# 2026-10-12: "2" and "7" added. A local yellow produced nothing at all before
+# -- no badge, no rail -- which was the half of the owner's safety-car idea
+# that could not ship on 2026-10-11, because the code was never mapped.
+#
+# "7" is the VSC winding down, and it is mapped to VSC on purpose: the VSC is
+# still in force until the track goes green, so leaving 7 unmapped would snap
+# the rail back to red for the last seconds of every VSC period. Mapping it
+# removes a flicker rather than adding one.
+_TRACK_FLAG = {"2": "YELLOW", "4": "SC", "5": "RED", "6": "VSC", "7": "VSC"}
 
 # SessionStatus carries two fields: "Status", the moment-to-moment state, and
 # "Started", the session's phase. Seen live: FP1 ran as Started/Started and

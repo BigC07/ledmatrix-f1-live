@@ -7,6 +7,21 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.11.0] - 2026-10-12
+
+### Added
+- **A local yellow flag reaches the board.** F1's `TrackStatus` code **2** was never in the map, so a
+  waved yellow produced nothing at all -- no badge, no rail -- while a safety car and a VSC both did.
+  It now draws a `YELLOW FLAG` badge on the header and turns the rail the same yellow a safety car
+  does. Deliberately the *same* yellow: three shades are not tellable apart on a two-pixel rail, and
+  at a glance a local yellow and a safety car say the same thing -- caution on track. The badge is
+  what distinguishes them.
+
+### Fixed
+- **A VSC's last seconds no longer snap the rail back to red.** `TrackStatus` **7** is the VSC
+  winding down, and it was unmapped; the VSC is still in force until the track goes green, so the
+  rail went red while the cars were still behind the delta. Code 7 now maps to `VSC`.
+
 ## [1.10.0] - 2026-10-11
 
 ### Changed
