@@ -7,6 +7,28 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.11.1] - 2026-11-01
+
+### Fixed
+
+- **The live board no longer goes up before the race starts.** F1 sets
+  `SessionStatus.Started` to `"Started"` during the pre-race procedure, and the feed reader treated
+  that field on its own as "the session is running". On 2026-11-01 the board appeared at 14:15 for a
+  15:00 race -- `{"Status": "Inactive", "Started": "Started"}`, the session clock still on a full
+  `02:00:00` and not extrapolating, the pit exit only just closed -- and because `live.solo_wall` is
+  keyed to the live cards, F1 took the whole wall 45 minutes early, holding back football,
+  basketball, the clock and the weather.
+- The clause could not simply be deleted: it is also what holds the board up through a **red flag**,
+  where `Status` falls back to `"Inactive"` while the session is still running (seen in FP2 on
+  2026-09-11, with 18 minutes left). Pre-race and a red-flag suspension look identical on those two
+  fields and differ only in history. The reader now **latches** once the session has genuinely been
+  seen under way -- a live `Status`, or an `ExtrapolatedClock` that is counting down -- and only
+  honours `Started` after that. Before the lights it claims nothing; a red flag behaves exactly as
+  it did. The latch resets whenever the session changes.
+- Known gap: connecting for the first time *during* a red-flag suspension, having never seen the
+  session live, leaves the board down until the session resumes. Rare, self-healing, and far
+  cheaper than taking the wall before every race.
+
 ## [1.11.0] - 2026-10-12
 
 ### Added

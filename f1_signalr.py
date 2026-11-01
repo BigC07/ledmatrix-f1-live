@@ -329,6 +329,11 @@ class SignalRLiveFeed:
         self._state: Dict[str, Any] = {}
         self._last_msg: Optional[datetime] = None
         self._finished_at: Optional[datetime] = None
+        # True once THIS session has actually been seen under way. See
+        # _running_locked(): F1 sets SessionStatus.Started to "Started" during
+        # the pre-race procedure, an hour before the lights, so that field
+        # alone cannot mean "running". Reset whenever the session changes.
+        self._seen_live: bool = False
         self._done_path: Optional[str] = None
         # True once this connection has delivered its own full state. Until
         # then, whatever is held is left over from an earlier session.
@@ -386,9 +391,20 @@ class SignalRLiveFeed:
                     # about the old one is true of this one.
                     self._state = {}
                     self._finished_at = None
+                    self._seen_live = False
             self._state[topic] = _merge(self._state.get(topic), delta)
             if self._last_msg is None or when > self._last_msg:
                 self._last_msg = when
+            # Has this session ever actually been under way? Two things say so,
+            # and neither is true during the pre-race procedure: a live Status,
+            # or a session clock that is counting down. Latched, because both go
+            # false again in a red-flag suspension, which is precisely when the
+            # board has to stay up.
+            if not self._seen_live:
+                if self._status_locked() in _LIVE_STATUSES:
+                    self._seen_live = True
+                elif (self._state.get("ExtrapolatedClock") or {}).get("Extrapolating") is True:
+                    self._seen_live = True
             if topic == "SessionStatus":
                 if self._done_locked():
                     if self._finished_at is None:
@@ -436,7 +452,22 @@ class SignalRLiveFeed:
             return False
         ss = self._state.get("SessionStatus") or {}
         status = str(ss.get("Status") or "").lower()
-        if status in _LIVE_STATUSES or str(ss.get("Started") or "").lower() == "started":
+        if status in _LIVE_STATUSES:
+            return True
+        # SessionStatus.Started is the session's PHASE, not whether it is
+        # running, and F1 sets it to "Started" during the pre-race procedure.
+        # Measured on 2026-11-01, 45 minutes before the Mexico City lights:
+        # {"Status": "Inactive", "Started": "Started"}, ExtrapolatedClock still
+        # on a full "02:00:00" and not extrapolating, pit exit only just
+        # closed. Taken alone this clause put the live board up at 14:15 for a
+        # 15:00 race, and solo_wall then handed F1 the whole wall -- football,
+        # basketball, the clock and the weather all held back for 45 minutes.
+        # It cannot simply go: it is also what holds the board through a red
+        # flag, where Status falls back to "Inactive" with the session still
+        # running (FP2, 2026-09-11, 18 minutes left). The two look identical on
+        # these two fields and differ only in history, so honour it only once
+        # the session has actually been seen under way.
+        if self._seen_live and str(ss.get("Started") or "").lower() == "started":
             return True
         if not self._segments_to_come_locked():
             return False
