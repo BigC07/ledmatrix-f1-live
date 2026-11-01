@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.11.1",
+  "version": "1.12.0",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.12.0",
+      "released": "2026-11-01",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "Race control's incident marker on the live board: the amber \"!\" the broadcast puts beside a driver when the stewards have something open against that car. There is no per-driver field for it anywhere in the timing feed -- a driver line carries lap times, gaps, pit and tyre state and nothing else -- so the broadcast parses it out of the free-text race-control messages, and so does this. \"TURN 4 INCIDENT INVOLVING CARS 44 (HAM) AND 16 (LEC) NOTED\" marks both cars, an UNDER INVESTIGATION upgrades it and a TIME PENALTY outranks both, while a deleted lap marks nobody because it is settled when it is announced. The mark clears after live.incident_ttl_s (default 600s), because the stewards never send an all-clear and nothing else would ever take it off. One amber for all three states: at a glance they all mean the stewards are looking at this car, and a row has no width for three symbols. Amber rather than red, which already means LIVE on these cards."
+    },
     {
       "version": "1.11.1",
       "released": "2026-11-01",

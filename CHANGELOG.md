@@ -7,6 +7,31 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.12.0] - 2026-11-01
+
+### Added
+
+- **Race control's incident marker on the live board** -- the amber `!` the broadcast puts beside a
+  driver, asked for from a photograph of the Mexico City race where the tower carried it next to
+  LEC and HAM and the wall carried nothing.
+- There is **no per-driver field for it in the feed**. Checked on the wire: a driver line carries
+  `BestLapTime`, `GapToLeader`, `InPit`, `IntervalToPositionAhead`, `LastLapTime`, `Line`,
+  `NumberOfLaps`, `PitOut`, `Position`, `RacingNumber`, `Retired`, `Sectors`, `ShowPosition`,
+  `Speeds`, `Status`, `Stopped` -- and nothing about the stewards. `RaceControlMessages` was
+  already subscribed to and had never been read. The broadcast parses the same prose we now do.
+- `TURN 4 INCIDENT INVOLVING CARS 44 (HAM) AND 16 (LEC) NOTED` marks **both** cars; the second one
+  carries no "CAR" of its own, so the parse matches the number-and-code pair rather than the word.
+  `UNDER INVESTIGATION` upgrades `NOTED`, a `TIME PENALTY` outranks both, and a car keeps the worst
+  thing open against it. A deleted lap marks nobody: it is about one lap time, settled the moment
+  it is announced, and the broadcast marks it differently.
+- Marks clear after `live.incident_ttl_s`, default 600s. The stewards announce incidents and never
+  an all-clear, so without a clock an incident noted on lap 2 would still be on the card at the flag.
+- One amber for all three states -- at a glance they all mean the stewards are looking at this car,
+  and the row has no width for three symbols. Amber, not red: red already means LIVE here, on the
+  rail and on the badge.
+- Known gap: only the **race** row carries it. The practice/qualifying row (`_render_driver_row`)
+  is a separate renderer fed by a separate builder and was left alone rather than changed untested.
+
 ## [1.11.1] - 2026-11-01
 
 ### Fixed

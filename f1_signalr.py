@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -274,6 +275,43 @@ def _current_stint(app_line: Any) -> Dict[str, Any]:
     return {}
 
 
+#: A race-control message names its cars as "44 (HAM)". In
+#: "CARS 44 (HAM) AND 16 (LEC)" the second car carries no "CAR" of its own, so
+#: match the number-and-code pair rather than the word, which picks up both.
+#: The trailing "(14:03:57)" these messages carry is not a match: no 3-letter
+#: code. Recorded live at Mexico City, 2026-11-01.
+_RC_CAR_RE = re.compile(r"(\d{1,2})\s*\(([A-Z]{3})\)")
+
+#: Worst first. A car keeps the most serious thing open against it, so a fresh
+#: "noted" about a second incident cannot downgrade a penalty already given.
+_INCIDENT_RANK = ("penalty", "investigating", "noted")
+
+
+def _incident_kind(text: Any) -> str:
+    """What a race-control message says has happened to a car, or "".
+
+    The wordings, taken off the wire during the Mexico City race:
+
+        FIA STEWARDS: 5 SECOND TIME PENALTY FOR CAR 16 (LEC) - ...
+        FIA STEWARDS: TURN 4 INCIDENT INVOLVING CARS 44 (HAM) AND 16 (LEC)
+            UNDER INVESTIGATION (14:03:57)
+        TURN 6 INCIDENT INVOLVING CAR 63 (RUS) NOTED - CAUSING A COLLISION
+
+    A deleted lap is deliberately not one of these. "CAR 10 (GAS) LAP DELETED -
+    TRACK LIMITS" is about one lap time, it is settled the moment it is
+    announced rather than open against the driver, and the broadcast marks it
+    differently from the incident flag this feeds.
+    """
+    up = str(text or "").upper()
+    if "PENALTY" in up:
+        return "penalty"
+    if "UNDER INVESTIGATION" in up:
+        return "investigating"
+    if "NOTED" in up:
+        return "noted"
+    return ""
+
+
 def _merge(dst: Any, src: Any) -> Any:
     """Fold one delta into the held state. See the module docstring."""
     if isinstance(src, dict):
@@ -316,6 +354,7 @@ class SignalRLiveFeed:
                  session_types=("Race",),
                  result_types=("Practice", "Qualifying"),
                  freshness_s: int = 300,
+                 incident_ttl_s: int = 600,
                  http: Optional[requests.Session] = None,
                  now_fn: Optional[Callable[[], datetime]] = None):
         self.log = logger or logging.getLogger("f1_signalr")
@@ -323,6 +362,10 @@ class SignalRLiveFeed:
         # No fallback to the default, unlike session_types: () turns it off.
         self.result_types = {str(t).lower() for t in (result_types or ())}
         self.freshness_s = freshness_s
+        # How long a race-control incident keeps marking its driver. The
+        # stewards never send an all-clear, so without this an incident noted
+        # on lap 2 is still on the card at the flag.
+        self.incident_ttl_s = incident_ttl_s
         self.http = http or requests.Session()
         self._now = now_fn or (lambda: datetime.now(timezone.utc))
         self._lock = threading.Lock()
@@ -550,11 +593,53 @@ class SignalRLiveFeed:
             "entries": entries,
         }
 
+    def _incidents_locked(self) -> Dict[int, str]:
+        """Which cars race control currently has something open against.
+
+        This is the broadcast's yellow "!" beside a driver. There is no
+        per-driver field for it anywhere in TimingData -- checked on the wire
+        during the Mexico City race, where a driver line carries only
+        BestLapTime, GapToLeader, InPit, IntervalToPositionAhead, LastLapTime,
+        Line, NumberOfLaps, PitOut, Position, RacingNumber, Retired, Sectors,
+        ShowPosition, Speeds, Status and Stopped. So the only source is
+        RaceControlMessages, which says it in prose, and the broadcast is
+        parsing the same text we are.
+
+        Each car keeps the most serious thing open against it. Entries age out
+        after `incident_ttl_s`: the stewards announce an incident but never an
+        all-clear, so nothing else would ever take the mark off.
+        """
+        rcm = (self._state.get("RaceControlMessages") or {}).get("Messages")
+        if not rcm:
+            return {}
+        msgs = list(rcm.values()) if isinstance(rcm, dict) else list(rcm)
+        now = self._now()
+        out: Dict[int, str] = {}
+        for m in msgs:
+            if not isinstance(m, dict):
+                continue
+            text = m.get("Message")
+            kind = _incident_kind(text)
+            if not kind:
+                continue
+            when = _parse_utc(m.get("Utc"))
+            if when is not None and (now - when).total_seconds() > self.incident_ttl_s:
+                continue
+            for num, _code in _RC_CAR_RE.findall(str(text or "")):
+                n = _int(num)
+                if n is None:
+                    continue
+                prev = out.get(n)
+                if prev is None or _INCIDENT_RANK.index(kind) <= _INCIDENT_RANK.index(prev):
+                    out[n] = kind
+        return out
+
     def _entries_locked(self, timed: bool) -> List[Dict[str, Any]]:
         timing = self._state.get("TimingData") or {}
         lines = timing.get("Lines") or {}
         drivers = self._state.get("DriverList") or {}
         app = (self._state.get("TimingAppData") or {}).get("Lines") or {}
+        incidents = self._incidents_locked()
         out = []
         for num, line in (lines.items() if isinstance(lines, dict) else ()):
             if not isinstance(line, dict):
@@ -604,6 +689,9 @@ class SignalRLiveFeed:
                 "retired": bool(line.get("Retired")),
                 "stopped": bool(line.get("Stopped")),
                 "in_pit": bool(line.get("InPit")),
+                # "penalty" | "investigating" | "noted" | "", from race
+                # control. The broadcast's yellow "!".
+                "incident": incidents.get(_int(num), ""),
             })
         out.sort(key=lambda e: e["position"])
         return out

@@ -134,6 +134,13 @@ _VSC_BADGE = (235, 185, 0)
 # the room, and unlike a word it costs no width, so it works on a 128px card
 # as well as a 256px one.
 _SPRINT_ORANGE = (255, 120, 0)
+
+#: Race control has something open against this car -- the broadcast's yellow
+#: "!". Amber, the same the football odds patch uses for "not trading", and
+#: deliberately not red: red already means LIVE on these cards, on the rail and
+#: on the badge, and a second meaning for it is unreadable on a driver row.
+#: Distinct from _SPRINT_ORANGE, which colours the rail rather than a glyph.
+_INCIDENT_AMBER = (255, 170, 0)
 _SPRINT_BAR = (35, 14, 0)
 
 # f1-live: the flag colours the rail, on every card in the live block
@@ -1554,6 +1561,22 @@ class F1Renderer:
         # a new one -- and on a scrolling ticker the colour is readable long
         # before the letters are.
         self._draw_text_outlined(draw, (px, name_y), name, name_font, fill=tc)
+
+        # Race control's "!" just past the name, where the broadcast tower puts
+        # it. The name keeps the team colour: the marker is an extra glyph
+        # rather than a recolour, because the colour already means the team.
+        # One amber for all three states -- a penalty, an investigation and a
+        # noted incident are the same "the stewards are looking at this car" at
+        # a glance, and the row has no width for three symbols.
+        if entry.get("incident"):
+            nw = self._tw(draw, name, name_font)
+            nh = self._th(draw, "A", name_font)
+            mx = px + nw + 4
+            if mx + 1 < self.display_width:
+                draw.rectangle([mx, name_y, mx + 1, name_y + nh - 4],
+                               fill=_INCIDENT_AMBER)
+                draw.rectangle([mx, name_y + nh - 2, mx + 1, name_y + nh - 1],
+                               fill=_INCIDENT_AMBER)
 
         # Line 2 left: time for the winner, gap for the rest. A driver who was
         # lapped or retired gets the reason instead -- their "gap" is a figure

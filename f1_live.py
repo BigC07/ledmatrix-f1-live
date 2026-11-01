@@ -272,6 +272,12 @@ def live_row_from_entry(entry: Dict[str, Any],
         # replay simply looks the way it did before.
         "tyre": entry.get("tyre") or "",
         "tyre_age": entry.get("tyre_age"),
+        # Race control's open item against this car: "penalty" |
+        # "investigating" | "noted" | "". This dict is an explicit whitelist,
+        # so a field absent here never reaches the card however well the feed
+        # fills it -- which is how the marker would have come out invisible
+        # with nothing in the logs to say why.
+        "incident": entry.get("incident") or "",
     }
 
 
