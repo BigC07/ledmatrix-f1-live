@@ -573,6 +573,18 @@ class SignalRLiveFeed:
         track = self._state.get("TrackStatus") or {}
         meeting = info.get("Meeting") or {}
         flag = _TRACK_FLAG.get(str(track.get("Status") or ""))
+        # A red flag STOPS the session, and F1 says so in SessionStatus.Status
+        # as "Aborted" -- which is why that value already counts as live.
+        # TrackStatus does not stay on 5 for the length of a suspension: at
+        # Mexico City on 2026-11-01 the race was red-flagged, the board showed
+        # RED three times, and then TrackStatus fell back to "2" (Yellow) with
+        # the cars still stopped, so the rail and the badge downgraded to
+        # YELLOW on a stopped race. The owner saw it before any check did.
+        # The suspension is the authoritative fact and outranks the track's
+        # moment-to-moment colour, the same way mapping code 7 to VSC stopped
+        # the rail snapping back for the last seconds of a VSC.
+        if self._status_locked() == "aborted":
+            flag = "RED"
         return {
             "source": "f1",
             "session_key": info.get("Key") or info.get("Path"),

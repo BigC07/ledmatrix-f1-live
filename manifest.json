@@ -1,7 +1,7 @@
 {
   "id": "f1-live",
   "name": "F1 Live",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "author": "BigC07",
   "class_name": "F1ScoreboardPlugin",
   "entry_point": "manager.py",
@@ -29,6 +29,12 @@
     "f1_live_calendar"
   ],
   "versions": [
+    {
+      "version": "1.12.1",
+      "released": "2026-11-01",
+      "ledmatrix_min_version": "2.0.0",
+      "notes": "A red flag now stays RED for the whole suspension. TrackStatus does not hold code 5 for the length of a stoppage: at Mexico City the race was red-flagged, the board showed RED, and then TrackStatus fell back to 2 (Yellow) with the cars still stopped, so the rail and the badge downgraded to YELLOW on a stopped race. SessionStatus \"Aborted\" IS the suspension -- it is why that value already counts as live -- so it now outranks the track's moment-to-moment colour. The hold does not latch: once the session reports running again the flag follows the track, so a local yellow after a restart still reads YELLOW, and a safety car, a VSC and a clear track are unchanged."
+    },
     {
       "version": "1.12.0",
       "released": "2026-11-01",

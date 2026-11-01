@@ -7,6 +7,23 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.12.1] - 2026-11-01
+
+### Fixed
+
+- **A red flag stays RED for the whole suspension.** Mexico City, live: the race was red-flagged,
+  the board showed RED three times, and then it showed **YELLOW with the cars still stopped**. The
+  owner saw it on the wall.
+- `TrackStatus` does not hold `5` for the length of a stoppage. At that moment the feed read
+  `SessionStatus {"Status": "Aborted", "Started": "Started"}` with `TrackStatus {"Status": "2",
+  "Message": "Yellow"}`, and the flag was taken from `TrackStatus` alone, so it downgraded.
+- `Aborted` **is** the suspension -- it is why that value already counts as a live status -- so it
+  now outranks the track's moment-to-moment colour. The same reasoning that mapped code 7 to VSC so
+  the rail would stop snapping back for the last seconds of a VSC period.
+- The hold does not latch: once the session reports running again the flag follows the track, so a
+  local yellow after a restart still reads YELLOW. A safety car, a VSC and a clear track while
+  running are all unchanged.
+
 ## [1.12.0] - 2026-11-01
 
 ### Added
@@ -50,9 +67,13 @@ Dates are the day the version was published. Settings named here are described i
   seen under way -- a live `Status`, or an `ExtrapolatedClock` that is counting down -- and only
   honours `Started` after that. Before the lights it claims nothing; a red flag behaves exactly as
   it did. The latch resets whenever the session changes.
-- Known gap: connecting for the first time *during* a red-flag suspension, having never seen the
-  session live, leaves the board down until the session resumes. Rare, self-healing, and far
-  cheaper than taking the wall before every race.
+- Known gap, **corrected 2026-11-01**: this first said a connection made *during a red flag* would
+  leave the board down. That is wrong, and was written without checking -- a red flag reports
+  `SessionStatus.Status` as `"Aborted"`, which is itself one of the live statuses, so the first
+  clause fires and the board comes straight up. The real gap is narrower: a first connection during
+  a suspension that reports `Inactive` / `Started` (the FP2 shape, where neither field says
+  running) waits for the session to resume. Rarer still, self-healing, and far cheaper than taking
+  the wall before every race.
 
 ## [1.11.0] - 2026-10-12
 
