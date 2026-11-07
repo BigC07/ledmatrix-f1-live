@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from circuit_data import get_circuit_info
 from logo_downloader import F1LogoLoader
-from team_colors import (F1_RED, PODIUM_COLORS, get_team_color)
+from team_colors import (F1_RED, PODIUM_COLORS, get_team_code, get_team_color)
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +238,23 @@ class F1Renderer:
                                    .get("row_logo_height") or 0)
         except (TypeError, ValueError):
             self.row_logo_px = 0
+
+        # f1-live: what a driver row's badge says about the team (2026-11-07,
+        # the owner noticing that Audi's logo carries AUDI and the other ten carry
+        # nothing, and picking from mock-ups). "logo" draws each file as it is --
+        # the default, so no other wall changes on update; "code" shrinks the
+        # mark and puts a three-letter code under it (MER, FER, AUD ...); "none"
+        # draws marks only, dropping Audi's wordmark. Rows only: the podium and
+        # winner cards keep the logo as drawn.
+        label = str((self.config.get("visual") or {}).get("row_logo_label")
+                    or "logo").strip().lower()
+        if label not in ("logo", "code", "none"):
+            self.logger.warning("f1-live: unknown visual.row_logo_label %r "
+                                "(known: logo, code, none); drawing logos as they are",
+                                label)
+            label = "logo"
+        self.row_logo_label = label
+        self._row_badge_cache: Dict[Tuple[str, int], Image.Image] = {}
 
         rr = self.config.get("recent_races", {})
         self.show_position_delta = rr.get("show_position_delta", True)
@@ -524,6 +541,53 @@ class F1Renderer:
             return max(8, min(self.row_logo_px, self.logo_box_max))
         frac = 0.8 if self.is_tall else 0.65
         return min(int(content_h * frac), self.logo_box_max)
+
+    def _row_badge(self, cid: str, box: int) -> Optional[Image.Image]:
+        """A driver row's team badge, per visual.row_logo_label.
+
+        "logo" is the file as drawn, fitted to the box. "none" is the mark alone.
+        "code" is the mark shrunk to leave a line under it for the team code,
+        both centred in a box-wide badge, so every code sits on one line and one
+        centre down the column of rows -- the layout of the mock-up the owner
+        picked. A box too small for a mark over a line of text gets the mark only.
+        """
+        if self.row_logo_label == "logo":
+            return self.logo_loader.get_team_logo(cid, max_height=box, max_width=box)
+        if self.row_logo_label == "none":
+            return self.logo_loader.get_team_logo(cid, max_height=box, max_width=box,
+                                                  emblem=True)
+        key = (str(cid), box)
+        if key in self._row_badge_cache:
+            return self._row_badge_cache[key]
+
+        font = self.fonts["small"]
+        probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+        # Measured on a full alphabet, not on the code, so every badge puts its
+        # line in the same place whatever letters it holds. These glyphs are
+        # taller than they look: getting this one row short clipped the foot off
+        # every E, L and R in the first mock-up (MER read MFA).
+        _, cap_top, _, cap_bottom = probe.textbbox((0, 0), "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                                                   font=font)
+        text_h, gap = cap_bottom - cap_top, 1
+        mark_h = box - text_h - gap
+        if mark_h < 6:
+            badge = self.logo_loader.get_team_logo(cid, max_height=box, max_width=box,
+                                                   emblem=True)
+        else:
+            mark = self.logo_loader.get_team_logo(cid, max_height=mark_h, max_width=box,
+                                                  emblem=True)
+            badge = Image.new("RGBA", (box, box), (0, 0, 0, 0))
+            if mark:
+                badge.alpha_composite(mark.convert("RGBA"),
+                                      ((box - mark.width) // 2, (mark_h - mark.height) // 2))
+            draw = ImageDraw.Draw(badge)
+            draw.fontmode = "1"
+            code = get_team_code(cid)
+            left, _, right, _ = draw.textbbox((0, 0), code, font=font)
+            draw.text(((box - (right - left)) // 2 - left, mark_h + gap - cap_top), code,
+                      font=font, fill=(255, 255, 255, 255))
+        self._row_badge_cache[key] = badge
+        return badge
 
     def _row_logo_y(self, content_h: int, logo_h: int, live: bool = False) -> int:
         """Top y for a row's badge, centred in the space actually free.
@@ -1635,8 +1699,7 @@ class F1Renderer:
             self._draw_fastest_lap(draw, line2_end + 3, row2, right_limit,
                                    str(entry.get("fastest_lap_time") or ""), line2_font)
 
-        logo = self.logo_loader.get_team_logo(cid, max_height=row_logo_w,
-                                              max_width=row_logo_w)
+        logo = self._row_badge(cid, row_logo_w)
         if logo:
             img.paste(logo, (self.display_width - logo.width - 2,
                              self._row_logo_y(content_h, logo.height, live)), logo)
@@ -2091,8 +2154,7 @@ class F1Renderer:
                               font=time_font, fill=delta_color)
 
         # Team logo right-aligned
-        logo = self.logo_loader.get_team_logo(
-            cid, max_height=row_logo_w, max_width=row_logo_w)
+        logo = self._row_badge(cid, row_logo_w)
         if logo:
             lx = self.display_width - logo.width - 2
             ly = self._row_logo_y(content_h, logo.height)

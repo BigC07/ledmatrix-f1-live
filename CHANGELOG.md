@@ -7,6 +7,25 @@ before the fork are not repeated here.
 Dates are the day the version was published. Settings named here are described in
 [README.md](README.md).
 
+## [1.13.0] - 2026-11-07
+
+### Added
+
+- **`visual.row_logo_label`: every team labelled the same way on a driver row.** Audi's logo is the
+  only bundled one with a name in it -- `AUDI` under its rings, drawn that way as pixel art in
+  September -- so a column of rows showed one team named and ten not. The owner noticed on the wall
+  the morning before the São Paulo GP and picked from rendered mock-ups.
+  - `"code"`: the mark shrinks to leave a line for a three-letter code under it -- `MER`, `MCL`,
+    `RBR`, `FER`, `AUD`, `HAA`, `ALP`, `RB`, `AMR`, `WIL`, `CAD`. Codes, not names, because a row
+    badge is 22px wide: in the 4x6 font only `AUDI`, `HAAS`, `MERC` and `RB` fit whole, and
+    `FERRARI` needs 32px. Every code sits on the same line and the same centre, so down a column
+    of rows they read as one column.
+  - `"none"`: marks only. Audi draws its rings without the wordmark; the other ten are unchanged.
+  - `"logo"`, the default: every logo exactly as 1.12.1 drew it, so no wall changes on update.
+- Rows only -- race, live and practice/qualifying. The podium and winner cards keep the logo as
+  drawn, wordmark and all.
+- The 2026 Audi team still normalises to `sauber` internally, so `sauber` reads `AUD`.
+
 ## [1.12.1] - 2026-11-01
 
 ### Fixed

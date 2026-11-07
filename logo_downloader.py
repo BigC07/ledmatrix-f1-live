@@ -39,6 +39,28 @@ _KEEP_ONLY = {"sauber": lambda r, g, b: g > 120 and r < 120 and b < 120}
 _TILE_SEEDS = {"ferrari": ((2, 48), (93, 48)), "haas": ((14, 48), (81, 48))}
 _NO_HARDEN = {"cadillac", "audi"}
 _PREFERRED_FILES = {"sauber": ("audi",)}
+# Files whose mark sits above a wordmark, the two separated by blank rows.
+# Asked for an emblem only (visual.row_logo_label "code" or "none", 2026-11-07),
+# they are cut at the first blank row under the mark: audi.png's rings fill rows
+# 3-9 and AUDI rows 12-16. This is the only bundled logo with a name in it, which
+# is why a row of these looked inconsistent -- Audi named, ten others not.
+_WORDMARK_BELOW = {"audi"}
+
+
+def _emblem_only(img: Image.Image) -> Image.Image:
+    """The mark above a wordmark, without the wordmark (see _WORDMARK_BELOW)."""
+    alpha = img.getchannel("A")
+    filled = [alpha.crop((0, y, img.width, y + 1)).getbbox() is not None
+              for y in range(img.height)]
+    if True not in filled:
+        return img
+    top = filled.index(True)
+    end = top
+    while end < img.height and filled[end]:
+        end += 1
+    mark = img.crop((0, top, img.width, end))
+    bbox = mark.getchannel("A").getbbox()
+    return mark.crop(bbox) if bbox else mark
 
 
 def _harden(img: Image.Image) -> Image.Image:
@@ -51,10 +73,15 @@ def _harden(img: Image.Image) -> Image.Image:
     return Image.merge("RGBA", (*comp.split(), a))
 
 
-def _prepare_logo(path: Path, max_width: int, max_height: int) -> Image.Image:
-    """Open a team logo and fit it to max_width x max_height for the panel."""
+def _prepare_logo(path: Path, max_width: int, max_height: int,
+                  emblem: bool = False) -> Image.Image:
+    """Open a team logo and fit it to max_width x max_height for the panel.
+
+    emblem=True drops a wordmark drawn under the mark (_WORDMARK_BELOW)."""
     img = Image.open(path).convert("RGBA")
     stem = path.stem
+    if emblem and stem in _WORDMARK_BELOW:
+        img = _emblem_only(img)
     if stem in _NO_HARDEN:
         img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
         return img
@@ -147,7 +174,7 @@ class F1LogoLoader:
         self._cache: Dict[str, Image.Image] = {}
 
     def get_team_logo(self, constructor_id: str, max_height: int = 28,
-                      max_width: int = 28) -> Image.Image:
+                      max_width: int = 28, emblem: bool = False) -> Image.Image:
         """
         Get a team logo, resized to fit within max dimensions.
 
@@ -158,6 +185,8 @@ class F1LogoLoader:
             constructor_id: Constructor identifier (any format)
             max_height: Maximum height in pixels
             max_width: Maximum width in pixels
+            emblem: drop a wordmark drawn under the mark (Audi's), for a
+                caller that labels the team itself or wants no name at all
 
         Returns:
             PIL Image in RGBA mode
@@ -169,12 +198,13 @@ class F1LogoLoader:
             if (self.teams_dir / f"{stem}.png").exists():
                 normalized = stem
                 break
-        cache_key = f"team_{normalized}_{max_width}x{max_height}"
+        emblem = bool(emblem) and normalized in _WORDMARK_BELOW
+        cache_key = f"team_{normalized}_{max_width}x{max_height}" + ("_emblem" if emblem else "")
 
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        logo = self._load_logo(normalized, max_width, max_height)
+        logo = self._load_logo(normalized, max_width, max_height, emblem)
         self._cache[cache_key] = logo
         return logo
 
@@ -211,7 +241,7 @@ class F1LogoLoader:
         return placeholder
 
     def _load_logo(self, constructor_id: str, max_width: int,
-                   max_height: int) -> Image.Image:
+                   max_height: int, emblem: bool = False) -> Image.Image:
         """Load a team logo from disk, with placeholder fallback.
 
         Always returns an image — generates a text placeholder if no
@@ -221,7 +251,7 @@ class F1LogoLoader:
 
         if logo_path.exists():
             try:
-                return _prepare_logo(logo_path, max_width, max_height)
+                return _prepare_logo(logo_path, max_width, max_height, emblem)
             except Exception as e:
                 logger.warning("Failed to load logo for %s: %s",
                              constructor_id, e)

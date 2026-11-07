@@ -125,3 +125,33 @@ def get_constructor_logo_filename(constructor_id):
     """
     normalized = normalize_constructor_id(constructor_id)
     return f"{normalized}.png" if normalized else "unknown.png"
+
+
+# f1-live: a three-letter code per team, drawn under the row badge when
+# visual.row_logo_label is "code" (2026-11-07, the owner picking it from mock-ups
+# because only Audi's logo carried a name). Three letters because a row badge is
+# 22px wide: in the 4x6 font only AUDI, HAAS, MERC and RB fit whole, FERRARI
+# needs 32px and WILLIAMS 36. The 2026 Audi team normalises to "sauber" (and draws
+# audi.png), so "sauber" reads AUD here too.
+F1_TEAM_CODES = {
+    "mclaren":      "MCL",
+    "red_bull":     "RBR",
+    "mercedes":     "MER",
+    "ferrari":      "FER",
+    "williams":     "WIL",
+    "aston_martin": "AMR",
+    "alpine":       "ALP",
+    "haas":         "HAA",
+    "sauber":       "AUD",
+    "rb":           "RB",
+    "cadillac":     "CAD",
+}
+
+
+def get_team_code(constructor_id):
+    """Short code for a team's row badge; an unknown team gets its first three letters."""
+    normalized = normalize_constructor_id(constructor_id)
+    if normalized in F1_TEAM_CODES:
+        return F1_TEAM_CODES[normalized]
+    letters = "".join(ch for ch in str(normalized or "") if ch.isalnum())
+    return letters[:3].upper() or "???"

@@ -958,6 +958,13 @@
           "maximum": 32,
           "default": 0,
           "description": "How tall the team badge is on a driver row, in pixels. 0 keeps the automatic size, which is about two thirds of the card. Raising it makes every badge bigger, but the round ones crowd the row: on a 32px card the badge shares the height with a 2px team-colour line and, on a live row, a 2px rail, so much past 22 leaves a circle almost touching both."
+        },
+        "row_logo_label": {
+          "type": "string",
+          "title": "Driver Row Team Label",
+          "enum": ["logo", "code", "none"],
+          "default": "logo",
+          "description": "What a driver row's team badge says about the team. \"logo\" draws each team's logo as it is: Audi's carries the word AUDI under its rings and the others carry no name. \"code\" shrinks every logo to make room for a three-letter team code under it (MER, MCL, RBR, FER, AUD, HAA, ALP, RB, AMR, WIL, CAD) -- full names do not fit a row badge. \"none\" draws logos without any name, Audi's rings included. Driver rows only; podium and winner cards keep the logo as it is."
         }
       },
       "x-propertyOrder": [
